@@ -500,3 +500,48 @@ if ('serviceWorker' in navigator) {
             });
     });
 }
+// ===== PASSWORD STRENGTH =====
+app.initPasswordStrength = function () {
+    const passwordInput = document.getElementById("password");
+    const strengthFill = document.getElementById("strengthFill");
+    const strengthText = document.getElementById("strengthText");
+
+    passwordInput.addEventListener("input", () => {
+        const password = passwordInput.value;
+        const score = calculateStrength(password);
+
+        // Animate width
+        strengthFill.style.width = score.percent + "%";
+
+        // Change color
+        strengthFill.style.background = score.color;
+
+        // Update text
+        strengthText.textContent = "Strength: " + score.label;
+    });
+
+    function calculateStrength(password) {
+        let score = 0;
+
+        if (password.length > 6) score++;
+        if (password.length > 10) score++;
+        if (/[A-Z]/.test(password)) score++;
+        if (/[0-9]/.test(password)) score++;
+        if (/[^A-Za-z0-9]/.test(password)) score++;
+
+        const levels = [
+            { label: "Very Weak", percent: 10, color: "#ef4444" },
+            { label: "Weak", percent: 25, color: "#f97316" },
+            { label: "Medium", percent: 50, color: "#eab308" },
+            { label: "Strong", percent: 75, color: "#22c55e" },
+            { label: "Very Strong", percent: 100, color: "#16a34a" }
+        ];
+
+        return levels[score];
+    };
+};
+
+// INIT
+document.addEventListener("DOMContentLoaded", () => {
+    app.initPasswordStrength();
+});
