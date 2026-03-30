@@ -278,3 +278,18 @@ footer {
         max-width: 700px;
     }
 }
+/* ===== STRENGTH METER ANIMATION ===== */
+.strength-bar {
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-top: 8px;
+}
+
+.strength-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 6px;
+    transition: width 0.4s ease, background 0.4s ease;
+}
