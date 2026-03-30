@@ -1,0 +1,93 @@
+{
+    "name": "Secure Encryptor",
+    "short_name": "SecureEnc",
+    "description": "Military-grade AES-256-GCM encryption in your browser. No data sent to servers.",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#f9fafb",
+    "theme_color": "#6366f1",
+    "orientation": "portrait-primary",
+    "scope": ".",
+    "icons": [
+        {
+            "src": "assets/icon-72.png",
+            "sizes": "72x72",
+            "type": "image/png"
+        },
+        {
+            "src": "assets/icon-96.png",
+            "sizes": "96x96",
+            "type": "image/png"
+        },
+        {
+            "src": "assets/icon-128.png",
+            "sizes": "128x128",
+            "type": "image/png"
+        },
+        {
+            "src": "assets/icon-144.png",
+            "sizes": "144x144",
+            "type": "image/png"
+        },
+        {
+            "src": "assets/icon-152.png",
+            "sizes": "152x152",
+            "type": "image/png"
+        },
+        {
+            "src": "assets/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "assets/icon-384.png",
+            "sizes": "384x384",
+            "type": "image/png"
+        },
+        {
+            "src": "assets/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ],
+    "categories": ["utilities", "security", "productivity"],
+    "screenshots": [
+        {
+            "src": "assets/screenshot-narrow.png",
+            "sizes": "750x1334",
+            "type": "image/png",
+            "form_factor": "narrow"
+        },
+        {
+            "src": "assets/screenshot-wide.png",
+            "sizes": "1280x800",
+            "type": "image/png",
+            "form_factor": "wide"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Encrypt Text",
+            "short_name": "Encrypt",
+            "description": "Quickly encrypt text",
+            "url": "./?action=encrypt",
+            "icons": [{ "src": "assets/icon-96.png", "sizes": "96x96" }]
+        },
+        {
+            "name": "Decrypt Text",
+            "short_name": "Decrypt",
+            "description": "Quickly decrypt text",
+            "url": "./?action=decrypt",
+            "icons": [{ "src": "assets/icon-96.png", "sizes": "96x96" }]
+        }
+    ],
+    "related_applications": [
+        {
+            "platform": "play",
+            "url": "https://play.google.com/store/apps/details?id=com.secure.encryptor",
+            "id": "com.secure.encryptor"
+        }
+    ],
+    "prefer_related_applications": false
+}
