@@ -11,7 +11,8 @@ const STATIC_ASSETS = [
     '/js/crypto.js',
     '/js/app.js',
     '/manifest.json',
-    '/assets/icon.svg'
+    '/assets/icon.svg',
+    '/offline.html'
 ];
 
 // Install event - cache static assets
