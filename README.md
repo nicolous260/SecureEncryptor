@@ -8,7 +8,8 @@ A privacy-first encryption tool implementing AES-256-GCM encryption with PBKDF2 
 
 ### 📦 Pre-Built APK
 You can install the latest pre-built Android APK directly:
-- **Download APK:** [`apk/SecureEncryptor.apk`](./apk/SecureEncryptor.apk)
+- **Direct GitHub Release Download:** [SecureEncryptor.apk (v1.0.0)](https://github.com/nicolous260/SecureEncryptor/releases/download/v1.0.0/SecureEncryptor.apk)
+- **Repository APK Path:** [`apk/SecureEncryptor.apk`](./apk/SecureEncryptor.apk)
 
 ### ✨ Features
 - **AES-256-GCM Encryption**: Secure encryption for both plain text and files.
