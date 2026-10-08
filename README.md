@@ -1,152 +1,83 @@
-# Secure Encryptor - Web Version
+# Secure Encryptor - Native Android App & Web PWA
 
-A Progressive Web App (PWA) implementing military-grade AES-256-GCM encryption that works entirely in your browser. Compatible with the Android app.
+A privacy-first encryption tool implementing AES-256-GCM encryption with PBKDF2 key derivation. Available as a modern **Native Android Application** (built with Kotlin & Jetpack Compose) and as a **Progressive Web App (PWA)**, with 100% cross-platform cryptographic interoperability.
+
+---
+
+## 📱 Android Application
+
+### 📦 Pre-Built APK
+You can install the latest pre-built Android APK directly:
+- **Download APK:** [`apk/SecureEncryptor.apk`](./apk/SecureEncryptor.apk)
+
+### ✨ Features
+- **AES-256-GCM Encryption**: Secure encryption for both plain text and files.
+- **PBKDF2 Key Derivation**: 100,000 iterations using HMAC-SHA256 and a 16-byte random salt.
+- **ENC2 Binary Specification**: Header layout compatible with both Android and Web versions:
+  `[MAGIC (4 bytes "ENC2")][VERSION (1 byte)][SALT (16 bytes)][IV (12 bytes)][CIPHERTEXT]`
+- **Password Generator & Strength Meter**: Real-time password strength evaluation and secure password generator.
+- **Jetpack Compose & Material 3**: Sleek dark slate UI with smooth animated transitions between input and result states.
+- **Edge-to-Edge Support**: Full Android 15 (SDK 35) edge-to-edge system bar integration.
+
+### 🛠️ Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/nicolous260/SecureEncryptor.git
+cd SecureEncryptor
+
+# Build Debug APK
+./gradlew assembleDebug
+
+# Install on connected device/emulator
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+---
 
 ## 📁 Project Structure
 
 ```
-SecureEncryptor-Web/
-├── index.html          # Main HTML file (clean, semantic markup)
-├── manifest.json       # PWA manifest for installability
-├── sw.js              # Service Worker for offline support
-├── css/
-│   └── style.css      # All styles (variables, responsive, dark mode)
-├── js/
-│   ├── crypto.js      # Encryption engine (Web Crypto API)
-│   └── app.js         # UI logic and event handling
-└── assets/
-    └── icon.svg       # App icon
+SecureEncryptor/
+├── apk/
+│   └── SecureEncryptor.apk       # Pre-built Android APK
+├── app/                          # Native Android Module
+│   ├── src/main/java/com/secureencryptor/app/
+│   │   ├── crypto/               # AES-GCM & PBKDF2 Crypto Engine
+│   │   ├── ui/                   # Jetpack Compose UI, ViewModels, & Theme
+│   │   └── MainActivity.kt       # Application Entry Point
+│   └── build.gradle.kts
+├── index.html                    # Web PWA HTML interface
+├── js/                           # Web Crypto API JavaScript engine
+├── css/                          # Web app styles
+├── sw.js                         # Service worker for offline web support
+├── build.gradle.kts              # Root Gradle build script
+└── settings.gradle.kts           # Gradle settings
 ```
 
-## 🚀 Quick Start
+---
 
-### Local Development
-Simply open `index.html` in any modern browser:
+## 🌐 Web PWA Version
+
+Open `index.html` in any modern web browser or run a local HTTP server:
+
 ```bash
-cd SecureEncryptor-Web
-# On macOS
-open index.html
-# On Linux
-xdg-open index.html
-# On Windows
-start index.html
+# Run local web server
+python3 -m http.server 8000
 ```
 
-Or use a local server (recommended):
-```bash
-# Python 3
-python -m http.server 8000
+---
 
-# Node.js
-npx serve .
+## 🔐 Security Specifications
 
-# PHP
-php -S localhost:8000
-```
+- **Algorithm**: AES/GCM/NoPadding (256-bit key, 12-byte random IV)
+- **Authentication Tag**: 128-bit GCM tag
+- **Key Derivation**: PBKDF2WithHmacSHA256 (100,000 iterations, 16-byte random salt)
+- **Header Magic**: `0x45 0x4E 0x43 0x32` (`"ENC2"`)
+- **Zero Server Storage**: All operations are performed 100% on-device / client-side.
 
-Then open http://localhost:8000
-
-## 🛠️ Development
-
-### File Organization
-
-**index.html**
-- Semantic HTML5 structure
-- ARIA accessibility labels
-- No inline styles or scripts (clean separation)
-- Links to external CSS and JS files
-
-**css/style.css**
-- CSS Custom Properties (variables) for theming
-- Dark mode support via `prefers-color-scheme`
-- Mobile-first responsive design
-- Print styles included
-- Reduced motion support for accessibility
-
-**js/crypto.js**
-- Self-contained module pattern
-- Uses Web Crypto API (hardware accelerated)
-- Same encryption as Android app:
-  - AES-256-GCM
-  - PBKDF2-HMAC-SHA256 (100,000 iterations)
-  - Compatible file format
-- No external dependencies
-
-**js/app.js**
-- UI state management
-- Event listeners
-- DOM manipulation
-- File handling (drag & drop)
-- PWA registration
-
-**sw.js**
-- Caches static assets for offline use
-- Update-in-background strategy
-- Offline fallback support
-
-**manifest.json**
-- PWA configuration
-- Icons, theme colors
-- Shortcuts for quick actions
-
-## 📱 Deployment
-
-### GitHub Pages
-1. Push to GitHub repository
-2. Settings → Pages → Source: main branch
-3. Site live at `username.github.io/repo-name`
-
-### Netlify
-1. Drag and drop folder to [netlify.com](https://netlify.com)
-2. Auto-deployed with HTTPS
-
-### Vercel
-1. Install Vercel CLI: `npm i -g vercel`
-2. Run: `vercel`
-3. Follow prompts
-
-### Firebase Hosting
-```bash
-npm install -g firebase-tools
-firebase login
-firebase init hosting
-firebase deploy
-```
-
-## 🔐 Security Notes
-
-- All encryption happens client-side
-- No data sent to servers
-- HTTPS required (Web Crypto API requirement)
-- Keys derived using PBKDF2 with 100k iterations
-- Random salt and IV for each operation
-
-## 🎨 Customization
-
-Edit `css/style.css` variables:
-```css
-:root {
-    --primary: #6366f1;        /* Change brand color */
-    --accent: #10b981;         /* Change success color */
-    --background: #ffffff;     /* Change background */
-}
-```
-
-## 🌐 Browser Support
-
-- Chrome 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
-- Chrome Android
-- Safari iOS
-
-Requires Web Crypto API support.
+---
 
 ## 📄 License
 
 MIT License - See LICENSE file for details.
-
----
-
-**Made with ❤️ for privacy-conscious users**
