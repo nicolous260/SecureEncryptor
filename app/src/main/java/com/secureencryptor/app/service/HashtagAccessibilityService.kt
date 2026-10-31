@@ -27,6 +27,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.secureencryptor.app.crypto.CryptoEngine
+import com.secureencryptor.app.notif.SecretStore
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
@@ -106,6 +107,11 @@ class HashtagAccessibilityService : AccessibilityService() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private val wm get() = getSystemService(WINDOW_SERVICE) as WindowManager
 
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        SecretStore.getPassword(this)?.let { sessionPassword = it; lastUse = System.currentTimeMillis() }
+    }
+
     override fun onAccessibilityEvent(e: AccessibilityEvent) {
         if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) handleTyping(e) else scheduleScan()
     }
@@ -126,6 +132,7 @@ class HashtagAccessibilityService : AccessibilityService() {
 
         unlockRe.matchEntire(text)?.let { m ->
             sessionPassword = m.groupValues[1]
+            SecretStore.setPassword(this, sessionPassword)
             lastUse = System.currentTimeMillis()
             results.clear(); pending.clear(); sheetSignature = ""; history = emptyList(); replyTo = null
             sheetWanted = true
@@ -137,7 +144,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         }
 
         quickRe.matchEntire(text)?.let { m ->
-            val pw = sessionPassword
+            val pw = SecretStore.getPassword(this) ?: sessionPassword
             if (pw == null) {
                 Toast.makeText(this, "No password yet. Type  #password#  first", Toast.LENGTH_SHORT).show()
                 node.recycle(); return
@@ -237,8 +244,9 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     // ------------------------------------------------------------ reading
 
-    private fun lock(announce: Boolean) {
+    private fun lock(announce: Boolean, forget: Boolean = true) {
         sessionPassword = null
+        if (forget) SecretStore.setPassword(this, null)
         sheetWanted = false
         replyTo = null
         results.clear(); pending.clear()
@@ -254,7 +262,7 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private fun scan() {
         val pw = sessionPassword ?: return
-        if (System.currentTimeMillis() - lastUse > autoLockMs) { lock(true); return }
+        if (System.currentTimeMillis() - lastUse > autoLockMs) { lock(true, false); return }
         if (!whatsappInForeground()) { hideWindows(); return }
         val root = rootInActiveWindow
         if (root == null) { hideWindows(); return }
