@@ -14,6 +14,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -175,7 +176,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         val pw = sessionPassword ?: return
         if (System.currentTimeMillis() - lastUse > autoLockMs) { lock(true); return }
         val root = rootInActiveWindow
-        if (root == null || root.packageName?.toString() !in waPackages) { clearLayer(); return }
+        if (root == null || !whatsappInForeground()) { clearLayer(); return }
 
         val items = ArrayList<Item>()
         collect(root, items)
@@ -309,7 +310,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         wm.addView(fl, lp)
         layer = fl
         main.postDelayed({ render() }, 120)   // re-render once attached so offsets are exact
-        main.postDelayed(watchdog, 1000)
+        main.postDelayed(watchdog, 300)
         return fl
     }
 
@@ -317,10 +318,25 @@ class HashtagAccessibilityService : AccessibilityService() {
     private val watchdog = object : Runnable {
         override fun run() {
             if (layer == null) return
-            val root = rootInActiveWindow
-            if (root == null || root.packageName?.toString() !in waPackages) { clearLayer(); return }
-            main.postDelayed(this, 1000)
+            if (!whatsappInForeground()) { clearLayer(); return }
+            main.postDelayed(this, 300)
         }
+    }
+
+    /** True only while a WhatsApp app window is the focused one (false in recents, home, lock screen...). */
+    private fun whatsappInForeground(): Boolean {
+        val ws = windows
+        if (!ws.isNullOrEmpty()) {
+            for (w in ws) {
+                if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION && (w.isFocused || w.isActive)) {
+                    val r = w.root ?: return false
+                    return r.packageName?.toString() in waPackages
+                }
+            }
+            return false
+        }
+        val root = rootInActiveWindow
+        return root != null && root.packageName?.toString() in waPackages
     }
 
     private fun clearLayer() {
