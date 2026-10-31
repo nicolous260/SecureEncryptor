@@ -18,6 +18,13 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -46,6 +53,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -151,9 +159,12 @@ private fun Root(tick: Int, onPick: (String) -> Unit) {
     var selected by remember { mutableStateOf(setOf<String>()) }
     var viewer by remember { mutableStateOf<Int?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf<List<Media>?>(null) }
 
     LaunchedEffect(tick, reload) {
         data = withContext(Dispatchers.IO) { Scanner.loadAll(ctx) }
+        refreshing = false
     }
 
     val d = data
@@ -180,6 +191,16 @@ private fun Root(tick: Int, onPick: (String) -> Unit) {
                 if (ok == todo.size) "Downloaded $ok" else "Downloaded $ok of ${todo.size}",
                 Toast.LENGTH_SHORT
             ).show()
+        }
+    }
+
+    fun delete(list: List<Media>) {
+        scope.launch {
+            val n = withContext(Dispatchers.IO) { list.count { Downloader.delete(ctx, it) } }
+            selected = emptySet()
+            viewer = null
+            reload++
+            Toast.makeText(ctx, "Deleted $n", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -254,6 +275,10 @@ private fun Root(tick: Int, onPick: (String) -> Unit) {
                         IconButton(onClick = { download(items.filter { it.key in selected }) }) {
                             Icon(Icons.Default.Download, contentDescription = "Download", tint = ACCENT)
                         }
+                    } else {
+                        IconButton(onClick = { confirmDelete = items.filter { it.key in selected } }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFEF5350))
+                        }
                     }
                 }
             }
@@ -291,6 +316,11 @@ private fun Root(tick: Int, onPick: (String) -> Unit) {
                 }
             } else {
                 val groups = remember(items) { items.groupBy { dayLabel(it.modified) } }
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = { refreshing = true; reload++ },
+                    modifier = Modifier.fillMaxSize()
+                ) {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     modifier = Modifier.fillMaxSize(),
@@ -320,8 +350,23 @@ private fun Root(tick: Int, onPick: (String) -> Unit) {
                         }
                     }
                 }
+                }
             }
         }
+    }
+
+    confirmDelete?.let { list ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("Delete ${list.size} item${if (list.size > 1) "s" else ""}?") },
+            text = { Text("They will be removed from your gallery. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = null; delete(list) }) {
+                    Text("Delete", color = Color(0xFFEF5350))
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } }
+        )
     }
 
     val v = viewer
@@ -332,7 +377,8 @@ private fun Root(tick: Int, onPick: (String) -> Unit) {
             savedNames = d.savedNames,
             onDismiss = { viewer = null },
             onDownload = { download(listOf(it)) },
-            onShare = { share(it) }
+            onShare = { share(it) },
+            onDelete = { confirmDelete = listOf(it) }
         )
     }
 }
@@ -460,7 +506,8 @@ private fun Viewer(
     savedNames: Set<String>,
     onDismiss: () -> Unit,
     onDownload: (Media) -> Unit,
-    onShare: (Media) -> Unit
+    onShare: (Media) -> Unit,
+    onDelete: (Media) -> Unit
 ) {
     val pager = rememberPagerState(initialPage = start) { items.size }
     Dialog(
@@ -508,7 +555,11 @@ private fun Viewer(
                 horizontalArrangement = Arrangement.Center
             ) {
                 if (cur.saved) {
-                    Text("In your gallery", color = MUTED)
+                    OutlinedButton(onClick = { onDelete(cur) }) {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Delete", color = Color(0xFFEF5350))
+                    }
                 } else {
                     Button(
                         onClick = { onDownload(cur) },
@@ -534,10 +585,27 @@ private fun ImagePage(m: Media) {
     val bmp by produceState<Bitmap?>(null, m.key) {
         value = withContext(Dispatchers.IO) { Thumbs.full(ctx, m) }
     }
+    var scale by remember(m.key) { mutableFloatStateOf(1f) }
+    var offset by remember(m.key) { mutableStateOf(Offset.Zero) }
+    val tstate = rememberTransformableState { zoom, pan, _ ->
+        scale = (scale * zoom).coerceIn(1f, 5f)
+        offset = if (scale <= 1f) Offset.Zero else offset + pan
+    }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val b = bmp
         if (b != null) {
-            Image(b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            Image(
+                b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(m.key) {
+                        detectTapGestures(onDoubleTap = {
+                            if (scale > 1f) { scale = 1f; offset = Offset.Zero } else scale = 2.5f
+                        })
+                    }
+                    .transformable(tstate, canPan = { scale > 1f })
+                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)
+            )
         } else {
             CircularProgressIndicator(color = ACCENT)
         }
@@ -572,18 +640,25 @@ private fun VideoPage(m: Media, active: Boolean) {
 private fun AudioPage(m: Media, active: Boolean) {
     val ctx = LocalContext.current
     var playing by remember(m.key) { mutableStateOf(false) }
+    var pos by remember(m.key) { mutableFloatStateOf(0f) }
     val mp = remember(m.key) {
         try {
             MediaPlayer().apply {
                 setDataSource(ctx, m.uri)
                 prepare()
-                setOnCompletionListener { playing = false }
+                setOnCompletionListener { playing = false; pos = 0f; seekTo(0) }
             }
         } catch (e: Exception) {
             null
         }
     }
     DisposableEffect(mp) { onDispose { mp?.release() } }
+    LaunchedEffect(playing) {
+        while (playing && mp != null) {
+            pos = mp.currentPosition.toFloat()
+            delay(250)
+        }
+    }
     LaunchedEffect(active) {
         if (!active) {
             try {
@@ -601,7 +676,19 @@ private fun AudioPage(m: Media, active: Boolean) {
         Icon(Icons.Default.MusicNote, contentDescription = null, tint = ACCENT, modifier = Modifier.size(72.dp))
         Spacer(Modifier.height(12.dp))
         Text(m.name, color = MUTED, fontSize = 13.sp, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
+        val total = (mp?.duration ?: 0).coerceAtLeast(1).toFloat()
+        Slider(
+            value = pos.coerceIn(0f, total),
+            onValueChange = { pos = it; mp?.seekTo(it.toInt()) },
+            valueRange = 0f..total,
+            colors = SliderDefaults.colors(thumbColor = ACCENT, activeTrackColor = ACCENT)
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(duration(pos.toLong()), color = MUTED, fontSize = 12.sp)
+            Text(duration(total.toLong()), color = MUTED, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(16.dp))
         FilledIconButton(
             onClick = {
                 if (mp != null) {

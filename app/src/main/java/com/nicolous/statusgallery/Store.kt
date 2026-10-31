@@ -13,6 +13,12 @@ object Store {
     fun savedUri(ctx: Context, name: String): String? = p(ctx).getString("saved_$name", null)
     fun markSaved(ctx: Context, name: String, uri: String) = p(ctx).edit().putString("saved_$name", uri).apply()
 
+    fun forgetUri(ctx: Context, uri: String) {
+        val e = p(ctx).edit()
+        p(ctx).all.filter { it.key.startsWith("saved_") && it.value == uri }.keys.forEach { e.remove(it) }
+        e.apply()
+    }
+
     /** status file name -> uri of the downloaded copy */
     fun savedEntries(ctx: Context): Map<String, String> =
         p(ctx).all

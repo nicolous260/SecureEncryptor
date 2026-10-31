@@ -37,6 +37,16 @@ object Downloader {
         false
     }
 
+    fun delete(ctx: Context, m: Media): Boolean {
+        val n = try {
+            ctx.contentResolver.delete(m.uri, null, null)
+        } catch (e: Exception) {
+            0
+        }
+        Store.forgetUri(ctx, m.key)
+        return n > 0
+    }
+
     /** Returns the uri of the downloaded copy (an existing one if it was downloaded before), or null on failure. */
     fun save(ctx: Context, m: Media): Uri? {
         if (m.saved) return m.uri
