@@ -1,21 +1,26 @@
 package com.secureencryptor.app.service
 
 import android.accessibilityservice.AccessibilityService
-import android.graphics.Bitmap
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.os.Build
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.Display
 import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.secureencryptor.app.crypto.CryptoEngine
@@ -24,16 +29,21 @@ import java.util.concurrent.Executors
 /**
  * WhatsApp # mode
  *
- *  SET/CHANGE PASSWORD  type  #password#   -> saved in memory; type it again with a new word to change it
- *  SEND                 type  your text#   -> encrypted with the saved password, press send
- *  READ                 automatic          -> encrypted messages on screen are decrypted in place
- *  LOCK                 type  ##           -> forget the password (auto-locks after 2 h idle)
- *  ONE-OFF SEND         type  #password,text#   (does not need a saved password)
- *  (fallback) paste ciphertext + #password#     -> plaintext shown in a popup
+ *  PASSWORD   type  #password#      saved in memory (type again with a new word to change it). Opens the reader.
+ *  SEND       type  your text#      encrypted with the saved password and sent automatically
+ *  READ       tap the green 🔓 button (right edge) -> panel with the decrypted messages on screen
+ *  LOCK       type  ##   or tap "Lock" in the panel (also auto-locks after 2 h idle)
+ *  ONE-OFF    type  #password,text#   (no saved password needed)
  */
 class HashtagAccessibilityService : AccessibilityService() {
 
     private data class Item(val text: String, val rect: Rect)
+    private data class Msg(val plain: String, val mine: Boolean)
+
+    companion object {
+        /** After encrypting, tap WhatsApp's send button automatically. */
+        const val AUTO_SEND = true
+    }
 
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -41,21 +51,22 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private var sessionPassword: String? = null
     private var lastUse = 0L
+    private var sheetWanted = false
 
     // ciphertext -> plaintext ("" = failed / other password). Main thread only.
     private val results = object : LinkedHashMap<String, String>(256, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 200
     }
     private val pending = HashSet<String>()
-    // ciphertext -> bubble colour sampled from the screen (main thread only)
-    private val colors = HashMap<String, Int>()
-    private var shotInFlight = false
-    private var shotFailed = false
-    private val fallbackBg = 0xFF1F2A30.toInt()
     private var lastItems: List<Item> = emptyList()
     private var scanScheduled = false
 
-    private var layer: FrameLayout? = null
+    private var sheet: LinearLayout? = null
+    private var sheetList: LinearLayout? = null
+    private var sheetScroll: ScrollView? = null
+    private var sheetTitle: TextView? = null
+    private var sheetSignature = ""
+    private var pill: TextView? = null
     private var popup: TextView? = null
 
     private val encryptRe = Regex("""^#([^,#]+),(.+)#$""", RegexOption.DOT_MATCHES_ALL)
@@ -66,15 +77,14 @@ class HashtagAccessibilityService : AccessibilityService() {
     private val waPackages = setOf("com.whatsapp", "com.whatsapp.w4b")
     private val autoLockMs = 2 * 60 * 60 * 1000L
 
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private val wm get() = getSystemService(WINDOW_SERVICE) as WindowManager
+
     override fun onAccessibilityEvent(e: AccessibilityEvent) {
-        if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
-            handleTyping(e)
-        } else {
-            scheduleScan()
-        }
+        if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) handleTyping(e) else scheduleScan()
     }
 
-    // ---------------------------------------------------------------- typing triggers
+    // ------------------------------------------------------------ typing triggers
 
     private fun handleTyping(e: AccessibilityEvent) {
         if (busy) return
@@ -91,9 +101,10 @@ class HashtagAccessibilityService : AccessibilityService() {
         unlockRe.matchEntire(text)?.let { m ->
             sessionPassword = m.groupValues[1]
             lastUse = System.currentTimeMillis()
-            results.clear(); pending.clear()
+            results.clear(); pending.clear(); sheetSignature = ""
+            sheetWanted = true
             setField(node, "")
-            Toast.makeText(this, "Password set. Type  text#  to send encrypted,  ##  to lock", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Password set. Write  message#  to send encrypted", Toast.LENGTH_LONG).show()
             node.recycle()
             scheduleScan()
             return
@@ -108,38 +119,42 @@ class HashtagAccessibilityService : AccessibilityService() {
             val plain = m.groupValues[1].trim()
             if (plain.isEmpty()) { node.recycle(); return }
             lastUse = System.currentTimeMillis()
-            busy = true
-            worker.execute {
-                try {
-                    val out = CryptoEngine.encryptText(pw, plain)
-                    main.post { setField(node, out) }
-                } catch (ex: Exception) {
-                    main.post { Toast.makeText(this, "Error: ${ex.message}", Toast.LENGTH_SHORT).show() }
-                } finally {
-                    main.postDelayed({ busy = false; node.recycle() }, 250)
-                }
-            }
+            encryptAndPut(node, pw, plain)
             return
         }
 
         val enc = encryptRe.matchEntire(text)
-        val dec = if (enc == null) pasteDecryptRe.matchEntire(text) else null
-        if (enc == null && dec == null) { node.recycle(); return }
+        if (enc != null) {
+            encryptAndPut(node, enc.groupValues[1], enc.groupValues[2])
+            return
+        }
 
+        val dec = pasteDecryptRe.matchEntire(text)
+        if (dec != null) {
+            busy = true
+            worker.execute {
+                val plain = try {
+                    CryptoEngine.decryptText(dec.groupValues[2], dec.groupValues[1])
+                } catch (ex: Exception) { "Wrong password or not an encrypted message" }
+                main.post { setField(node, ""); showPopup(plain) }
+                main.postDelayed({ busy = false; node.recycle() }, 250)
+            }
+            return
+        }
+        node.recycle()
+    }
+
+    private fun encryptAndPut(node: AccessibilityNodeInfo, password: String, plain: String) {
         busy = true
         worker.execute {
             try {
-                if (enc != null) {
-                    val out = CryptoEngine.encryptText(enc.groupValues[1], enc.groupValues[2])
-                    main.post { setField(node, out) }
-                } else {
-                    val plain = try {
-                        CryptoEngine.decryptText(dec!!.groupValues[2], dec.groupValues[1])
-                    } catch (ex: Exception) { "Wrong password or not an encrypted message" }
-                    main.post { setField(node, ""); showPopup(plain) }
+                val out = CryptoEngine.encryptText(password, plain)
+                main.post {
+                    setField(node, out)
+                    if (AUTO_SEND) main.postDelayed({ clickSend(0) }, 300)
                 }
             } catch (ex: Exception) {
-                main.post { showPopup("Error: ${ex.message}") }
+                main.post { Toast.makeText(this, "Error: ${ex.message}", Toast.LENGTH_SHORT).show() }
             } finally {
                 main.postDelayed({ busy = false; node.recycle() }, 250)
             }
@@ -157,12 +172,32 @@ class HashtagAccessibilityService : AccessibilityService() {
         })
     }
 
-    // ---------------------------------------------------------------- auto-decrypt on screen
+    /** Tap WhatsApp's send button. If it can't be found the ciphertext simply stays in the box. */
+    private fun clickSend(attempt: Int) {
+        val root = rootInActiveWindow
+        var target: AccessibilityNodeInfo? = null
+        if (root != null) {
+            for (pkg in waPackages) {
+                target = root.findAccessibilityNodeInfosByViewId("$pkg:id/send").firstOrNull()
+                if (target != null) break
+            }
+            if (target == null) {
+                target = root.findAccessibilityNodeInfosByText("Send").firstOrNull { it.isClickable }
+            }
+        }
+        if (target != null && target.isEnabled) {
+            target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } else if (attempt < 3) {
+            main.postDelayed({ clickSend(attempt + 1) }, 250)
+        }
+    }
+
+    // ------------------------------------------------------------ reading
 
     private fun lock(announce: Boolean) {
         sessionPassword = null
-        results.clear(); pending.clear(); colors.clear(); shotFailed = false; lastItems = emptyList()
-        clearLayer()
+        results.clear(); pending.clear(); lastItems = emptyList(); sheetSignature = ""
+        hideAll()
         if (announce) Toast.makeText(this, "Locked", Toast.LENGTH_SHORT).show()
     }
 
@@ -175,8 +210,9 @@ class HashtagAccessibilityService : AccessibilityService() {
     private fun scan() {
         val pw = sessionPassword ?: return
         if (System.currentTimeMillis() - lastUse > autoLockMs) { lock(true); return }
+        if (!whatsappInForeground()) { hideAll(); return }
         val root = rootInActiveWindow
-        if (root == null || !whatsappInForeground()) { clearLayer(); return }
+        if (root == null) { hideAll(); return }
 
         val items = ArrayList<Item>()
         collect(root, items)
@@ -189,56 +225,11 @@ class HashtagAccessibilityService : AccessibilityService() {
                 val plain = try { CryptoEngine.decryptText(pw, key) } catch (ex: Exception) { "" }
                 main.post {
                     pending.remove(key)
-                    if (sessionPassword == pw) { results[key] = plain; render() }
+                    if (sessionPassword == pw) { results[key] = plain; refreshUi() }
                 }
             }
         }
-        requestColors(items)
-        render()
-    }
-
-    /** Sample each bubble's background colour (API 30+) so the overlay blends in. */
-    private fun requestColors(items: List<Item>) {
-        if (Build.VERSION.SDK_INT < 30 || shotFailed || shotInFlight) return
-        val missing = items.filter { colors[it.text] == null }
-        if (missing.isEmpty()) return
-        shotInFlight = true
-        val inset = (4 * resources.displayMetrics.density).toInt()
-        takeScreenshot(Display.DEFAULT_DISPLAY, worker, object : TakeScreenshotCallback {
-            override fun onSuccess(shot: ScreenshotResult) {
-                val found = HashMap<String, Int>()
-                try {
-                    val hw = shot.hardwareBuffer
-                    val bmp = Bitmap.wrapHardwareBuffer(hw, shot.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
-                    hw.close()
-                    if (bmp != null) {
-                        for (m in missing) {
-                            val x = (m.rect.left - inset).coerceIn(0, bmp.width - 1)
-                            val y = (m.rect.top + m.rect.height() / 2).coerceIn(0, bmp.height - 1)
-                            found[m.text] = bmp.getPixel(x, y) or 0xFF000000.toInt()
-                        }
-                        bmp.recycle()
-                    }
-                } catch (ex: Exception) { /* fall back below */ }
-                main.post {
-                    shotInFlight = false
-                    if (found.isEmpty()) shotFailed = true else colors.putAll(found)
-                    render()
-                }
-            }
-
-            override fun onFailure(errorCode: Int) {
-                main.post {
-                    shotInFlight = false
-                    if (errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
-                        main.postDelayed({ scheduleScan() }, 500)
-                    } else {
-                        shotFailed = true
-                    }
-                    render()
-                }
-            }
-        })
+        refreshUi()
     }
 
     private fun collect(n: AccessibilityNodeInfo, out: MutableList<Item>) {
@@ -254,76 +245,172 @@ class HashtagAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun render() {
-        val shown = ArrayList<Triple<Item, String, Int>>()
-        for (item in lastItems) {
-            val plain = results[item.text]
-            if (plain.isNullOrEmpty()) continue
-            val bg = colors[item.text]
-                ?: if (Build.VERSION.SDK_INT < 30 || shotFailed) fallbackBg else continue
-            shown.add(Triple(item, plain, bg))
-        }
-        if (shown.isEmpty()) { clearLayer(); return }
-        lastUse = System.currentTimeMillis()
+    private fun decryptedMessages(): List<Msg> {
+        val w = resources.displayMetrics.widthPixels
+        return lastItems
+            .sortedBy { it.rect.top }
+            .filter { !results[it.text].isNullOrEmpty() }
+            .distinctBy { it.text }
+            .map { Msg(results[it.text]!!, it.rect.left > w * 0.10) }
+    }
 
-        val l = layer ?: createLayer()
-        val loc = IntArray(2)
-        if (l.isAttachedToWindow) l.getLocationOnScreen(loc)
-        l.removeAllViews()
-        for ((item, plain, bg) in shown) {
-            val lum = (0.299 * Color.red(bg) + 0.587 * Color.green(bg) + 0.114 * Color.blue(bg)) / 255.0
-            val tv = TextView(this).apply {
-                text = plain
-                setTextColor(if (lum > 0.6) 0xFF111B21.toInt() else 0xFFE9EDEF.toInt())
-                textSize = 16f
-                includeFontPadding = false
-                setBackgroundColor(bg)
-                setPadding(0, 0, 0, 0)
-                gravity = Gravity.TOP or Gravity.START
-            }
-            // cover exactly the ciphertext text block, so the text sits where WhatsApp text would
-            val lp = FrameLayout.LayoutParams(item.rect.width() + 2, item.rect.height() + 2)
-            lp.leftMargin = item.rect.left - 1 - loc[0]
-            lp.topMargin = item.rect.top - 1 - loc[1]
-            l.addView(tv, lp)
+    // ------------------------------------------------------------ UI: pill + panel
+
+    private fun refreshUi() {
+        if (sessionPassword == null || !whatsappInForeground()) { hideAll(); return }
+        val msgs = decryptedMessages()
+        if (msgs.isNotEmpty()) lastUse = System.currentTimeMillis()
+        if (sheetWanted) {
+            hidePill(); showSheet(msgs)
+        } else if (msgs.isNotEmpty()) {
+            hideSheet(); showPill(msgs.size)
+        } else {
+            hideSheet(); hidePill()
+        }
+        if (sheet != null || pill != null) {
+            main.removeCallbacks(watchdog)
+            main.postDelayed(watchdog, 300)
         }
     }
 
-    private fun createLayer(): FrameLayout {
-        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val fl = FrameLayout(this)
+    private fun showPill(count: Int) {
+        val p = pill ?: createPill()
+        p.text = "🔓 $count"
+    }
+
+    private fun createPill(): TextView {
+        val tv = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = GradientDrawable().apply {
+                setColor(0xF0128C7E.toInt()); cornerRadius = dp(24).toFloat()
+            }
+            setOnClickListener { sheetWanted = true; refreshUi() }
+        }
         val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            if (Build.VERSION.SDK_INT >= 28) {
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            }
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(8)
+            y = (resources.displayMetrics.heightPixels * 0.30).toInt()
         }
-        wm.addView(fl, lp)
-        layer = fl
-        main.postDelayed({ render() }, 120)   // re-render once attached so offsets are exact
-        main.postDelayed(watchdog, 300)
-        return fl
+        wm.addView(tv, lp)
+        pill = tv
+        return tv
     }
 
-    /** Remove the overlay as soon as WhatsApp is no longer the active window. */
+    private fun hidePill() {
+        pill?.let { runCatching { wm.removeView(it) } }
+        pill = null
+    }
+
+    private fun showSheet(msgs: List<Msg>) {
+        if (sheet == null) createSheet()
+        sheetTitle?.text = if (msgs.isEmpty()) "🔓 No encrypted messages in view" else "🔓 Decrypted · ${msgs.size}"
+        val sig = msgs.joinToString("\u0001") { (if (it.mine) "M" else "T") + it.plain }
+        if (sig == sheetSignature) return
+        sheetSignature = sig
+        val list = sheetList ?: return
+        list.removeAllViews()
+        for (m in msgs) {
+            val tv = TextView(this).apply {
+                text = m.plain
+                textSize = 16f
+                setTextColor(0xFFE9EDEF.toInt())
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                maxWidth = (resources.displayMetrics.widthPixels * 0.82).toInt()
+                background = GradientDrawable().apply {
+                    setColor(if (m.mine) 0xFF0B5D4B.toInt() else 0xFF2A343B.toInt())
+                    cornerRadius = dp(14).toFloat()
+                }
+                setOnClickListener { copyText(m.plain) }
+            }
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = if (m.mine) Gravity.END else Gravity.START
+                bottomMargin = dp(6)
+            }
+            list.addView(tv, lp)
+        }
+        sheetScroll?.post { sheetScroll?.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun createSheet() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(8), dp(14), dp(10))
+            val r = dp(20).toFloat()
+            background = GradientDrawable().apply {
+                setColor(0xF2121A1F.toInt())
+                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, r, r, r, r)
+            }
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val title = TextView(this).apply {
+            setTextColor(0xFF9FD8CB.toInt()); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        fun button(label: String, onClick: () -> Unit) = TextView(this).apply {
+            text = label
+            setTextColor(0xFFE9EDEF.toInt()); textSize = 14f
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setOnClickListener { onClick() }
+        }
+        header.addView(button("Lock") { lock(true) })
+        header.addView(button("✕") { sheetWanted = false; refreshUi() })
+        root.addView(header, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(this).apply { addView(list) }
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        val lp = WindowManager.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (resources.displayMetrics.heightPixels * 0.42).toInt(),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP }
+        wm.addView(root, lp)
+        sheet = root; sheetList = list; sheetScroll = scroll; sheetTitle = title
+    }
+
+    private fun hideSheet() {
+        sheet?.let { runCatching { wm.removeView(it) } }
+        sheet = null; sheetList = null; sheetScroll = null; sheetTitle = null; sheetSignature = ""
+    }
+
+    private fun hideAll() {
+        sheetWanted = false
+        hideSheet(); hidePill()
+        main.removeCallbacks(watchdog)
+    }
+
+    private fun copyText(text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("decrypted", text))
+        Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Hide everything as soon as WhatsApp is no longer the focused app (recents, home, lock screen...). */
     private val watchdog = object : Runnable {
         override fun run() {
-            if (layer == null) return
-            if (!whatsappInForeground()) { clearLayer(); return }
+            if (sheet == null && pill == null) return
+            if (!whatsappInForeground()) { hideAll(); return }
             main.postDelayed(this, 300)
         }
     }
 
-    /** True only while a WhatsApp app window is the focused one (false in recents, home, lock screen...). */
     private fun whatsappInForeground(): Boolean {
         val ws = windows
         if (!ws.isNullOrEmpty()) {
@@ -339,17 +426,10 @@ class HashtagAccessibilityService : AccessibilityService() {
         return root != null && root.packageName?.toString() in waPackages
     }
 
-    private fun clearLayer() {
-        main.removeCallbacks(watchdog)
-        layer?.let { runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } }
-        layer = null
-    }
-
-    // ---------------------------------------------------------------- fallback popup
+    // ------------------------------------------------------------ fallback popup (paste + #password#)
 
     private fun showPopup(msg: String) {
         dismissPopup()
-        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val tv = TextView(this).apply {
             text = "$msg\n\n(tap to dismiss)"
             setTextColor(Color.WHITE)
@@ -370,14 +450,14 @@ class HashtagAccessibilityService : AccessibilityService() {
     }
 
     private fun dismissPopup() {
-        popup?.let { runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } }
+        popup?.let { runCatching { wm.removeView(it) } }
         popup = null
     }
 
-    override fun onInterrupt() { dismissPopup(); clearLayer() }
+    override fun onInterrupt() { dismissPopup(); hideAll() }
 
     override fun onDestroy() {
-        dismissPopup(); clearLayer()
+        dismissPopup(); hideAll()
         sessionPassword = null
         worker.shutdownNow()
         super.onDestroy()

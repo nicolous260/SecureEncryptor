@@ -1,3 +1,3 @@
 <resources>
-    <string name="a11y_service_desc">Set a password by typing #password# in WhatsApp, then end any message with # to send it encrypted. Encrypted messages on screen are decrypted automatically. Works only in WhatsApp. Nothing leaves your device.</string>
+    <string name="a11y_service_desc">Set a password by typing #password# in WhatsApp, then end any message with # to send it encrypted. Tap the green lock button in a chat to read decrypted messages. Works only in WhatsApp. Nothing leaves your device.</string>
 </resources>
