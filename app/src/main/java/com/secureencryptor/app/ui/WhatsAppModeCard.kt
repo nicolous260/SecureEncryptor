@@ -41,8 +41,10 @@ fun WhatsAppModeCard() {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("WhatsApp # mode", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TextPrimary)
             Text(
-                "Send: type #password,message# in WhatsApp\n" +
-                "Read: type #password# once, encrypted messages decrypt on screen. Type ## to lock",
+                "1. Type #password#  (set or change password)\n" +
+                "2. Type your message ending with #  to send it encrypted\n" +
+                "3. Received messages decrypt on screen automatically\n" +
+                "Type ## to lock",
                 fontSize = 13.sp, color = TextSecondary
             )
             Text(

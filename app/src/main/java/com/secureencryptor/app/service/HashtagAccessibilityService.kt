@@ -21,10 +21,12 @@ import java.util.concurrent.Executors
 /**
  * WhatsApp # mode
  *
- *  SEND    type  #password,your secret text#  -> box becomes ciphertext, press send
- *  UNLOCK  type  #password#                   -> encrypted messages on screen are decrypted in place
- *  LOCK    type  ##                           -> forget the password (also auto-locks after 15 min idle)
- *  (fallback) paste ciphertext + #password#   -> plaintext shown in a popup
+ *  SET/CHANGE PASSWORD  type  #password#   -> saved in memory; type it again with a new word to change it
+ *  SEND                 type  your text#   -> encrypted with the saved password, press send
+ *  READ                 automatic          -> encrypted messages on screen are decrypted in place
+ *  LOCK                 type  ##           -> forget the password (auto-locks after 2 h idle)
+ *  ONE-OFF SEND         type  #password,text#   (does not need a saved password)
+ *  (fallback) paste ciphertext + #password#     -> plaintext shown in a popup
  */
 class HashtagAccessibilityService : AccessibilityService() {
 
@@ -50,10 +52,11 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private val encryptRe = Regex("""^#([^,#]+),(.+)#$""", RegexOption.DOT_MATCHES_ALL)
     private val unlockRe = Regex("""^#([^,#]+)#$""")
+    private val quickRe = Regex("""^([^#]+)#$""", RegexOption.DOT_MATCHES_ALL)
     private val pasteDecryptRe = Regex("""^([A-Za-z0-9+/=\s]{40,})#([^#]+)#$""")
 
     private val waPackages = setOf("com.whatsapp", "com.whatsapp.w4b")
-    private val autoLockMs = 15 * 60 * 1000L
+    private val autoLockMs = 2 * 60 * 60 * 1000L
 
     override fun onAccessibilityEvent(e: AccessibilityEvent) {
         if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
@@ -82,9 +85,32 @@ class HashtagAccessibilityService : AccessibilityService() {
             lastUse = System.currentTimeMillis()
             results.clear(); pending.clear()
             setField(node, "")
-            Toast.makeText(this, "Unlocked. Type ## to lock", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Password set. Type  text#  to send encrypted,  ##  to lock", Toast.LENGTH_LONG).show()
             node.recycle()
             scheduleScan()
+            return
+        }
+
+        quickRe.matchEntire(text)?.let { m ->
+            val pw = sessionPassword
+            if (pw == null) {
+                Toast.makeText(this, "No password yet. Type  #password#  first", Toast.LENGTH_SHORT).show()
+                node.recycle(); return
+            }
+            val plain = m.groupValues[1].trim()
+            if (plain.isEmpty()) { node.recycle(); return }
+            lastUse = System.currentTimeMillis()
+            busy = true
+            worker.execute {
+                try {
+                    val out = CryptoEngine.encryptText(pw, plain)
+                    main.post { setField(node, out) }
+                } catch (ex: Exception) {
+                    main.post { Toast.makeText(this, "Error: ${ex.message}", Toast.LENGTH_SHORT).show() }
+                } finally {
+                    main.postDelayed({ busy = false; node.recycle() }, 250)
+                }
+            }
             return
         }
 
