@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "StatusSaver"
+rootProject.name = "StatusGallery"
 include(":app")
