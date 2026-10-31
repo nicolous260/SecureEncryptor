@@ -1,3 +1,3 @@
 <resources>
-    <string name="a11y_service_desc">Encrypts text you type in WhatsApp as #password,message# and decrypts received messages. Only reads the WhatsApp message box, only while you type a # command. Nothing leaves your device.</string>
+    <string name="a11y_service_desc">Encrypts text you type in WhatsApp as #password,message# and shows decrypted text for encrypted messages on screen after you type #password#. Works only in WhatsApp. Nothing leaves your device.</string>
 </resources>

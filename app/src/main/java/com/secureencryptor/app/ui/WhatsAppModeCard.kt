@@ -42,7 +42,7 @@ fun WhatsAppModeCard() {
             Text("WhatsApp # mode", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TextPrimary)
             Text(
                 "Send: type #password,message# in WhatsApp\n" +
-                "Read: paste the encrypted text, then type #password#",
+                "Read: type #password# once, encrypted messages decrypt on screen. Type ## to lock",
                 fontSize = 13.sp, color = TextSecondary
             )
             Text(
