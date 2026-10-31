@@ -129,6 +129,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             // Hero Header
             HeaderSection()
 
+            // WhatsApp # mode
+            WhatsAppModeCard()
+
             // Password Card
             Card(
                 shape = RoundedCornerShape(20.dp),
