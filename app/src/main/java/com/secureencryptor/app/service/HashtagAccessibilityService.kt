@@ -15,6 +15,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -25,24 +26,28 @@ import android.widget.TextView
 import android.widget.Toast
 import com.secureencryptor.app.crypto.CryptoEngine
 import java.util.concurrent.Executors
+import kotlin.math.abs
 
 /**
  * WhatsApp # mode
  *
  *  PASSWORD   type  #password#      saved in memory (type again with a new word to change it). Opens the reader.
  *  SEND       type  your text#      encrypted with the saved password and sent automatically
- *  READ       tap the green 🔓 button (right edge) -> panel with the decrypted messages on screen
- *  LOCK       type  ##   or tap "Lock" in the panel (also auto-locks after 2 h idle)
+ *  READ       the reader replaces the whole chat area with the decrypted conversation.
+ *             Scroll it; at the top/bottom it scrolls WhatsApp for you to load older/newer messages.
+ *             ✕ closes it (a green 🔓 button stays on the right edge to reopen it).
+ *  LOCK       type  ##   or tap "Lock" (also auto-locks after 2 h idle)
  *  ONE-OFF    type  #password,text#   (no saved password needed)
  */
 class HashtagAccessibilityService : AccessibilityService() {
 
-    private data class Item(val text: String, val rect: Rect)
-    private data class Msg(val plain: String, val mine: Boolean)
+    private data class Row(val text: String, val enc: Boolean, val rect: Rect)
+    private data class Hist(val text: String, val enc: Boolean, val mine: Boolean)
 
     companion object {
         /** After encrypting, tap WhatsApp's send button automatically. */
         const val AUTO_SEND = true
+        private const val MAX_HISTORY = 400
     }
 
     private val worker = Executors.newSingleThreadExecutor()
@@ -54,21 +59,23 @@ class HashtagAccessibilityService : AccessibilityService() {
     private var sheetWanted = false
 
     // ciphertext -> plaintext ("" = failed / other password). Main thread only.
-    private val results = object : LinkedHashMap<String, String>(256, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 200
+    private val results = object : LinkedHashMap<String, String>(512, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 600
     }
     private val pending = HashSet<String>()
-    private var lastItems: List<Item> = emptyList()
-    private var scanScheduled = false
+    private var lastRows: List<Row> = emptyList()
+    private var history: List<Hist> = emptyList()
     private var chatRect: Rect? = null
-    private val log = ArrayList<String>()            // ciphertext keys in chat order (history)
-    private val logMsg = HashMap<String, Msg>()
+    private var scanScheduled = false
 
     private var sheet: LinearLayout? = null
+    private var sheetAnchored = false
     private var sheetList: LinearLayout? = null
     private var sheetScroll: ScrollView? = null
     private var sheetTitle: TextView? = null
     private var sheetSignature = ""
+    private var rebuilding = false
+    private var lastChatScroll = 0L
     private var pill: TextView? = null
     private var popup: TextView? = null
 
@@ -104,8 +111,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         unlockRe.matchEntire(text)?.let { m ->
             sessionPassword = m.groupValues[1]
             lastUse = System.currentTimeMillis()
-            results.clear(); pending.clear(); sheetSignature = ""
-            log.clear(); logMsg.clear()
+            results.clear(); pending.clear(); sheetSignature = ""; history = emptyList()
             sheetWanted = true
             setField(node, "")
             Toast.makeText(this, "Password set. Write  message#  to send encrypted", Toast.LENGTH_LONG).show()
@@ -200,9 +206,9 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private fun lock(announce: Boolean) {
         sessionPassword = null
-        results.clear(); pending.clear(); lastItems = emptyList(); sheetSignature = ""
-        log.clear(); logMsg.clear()
-        hideAll()
+        sheetWanted = false
+        results.clear(); pending.clear()
+        hideWindows()
         if (announce) Toast.makeText(this, "Locked", Toast.LENGTH_SHORT).show()
     }
 
@@ -215,17 +221,20 @@ class HashtagAccessibilityService : AccessibilityService() {
     private fun scan() {
         val pw = sessionPassword ?: return
         if (System.currentTimeMillis() - lastUse > autoLockMs) { lock(true); return }
-        if (!whatsappInForeground()) { hideAll(); return }
+        if (!whatsappInForeground()) { hideWindows(); return }
         val root = rootInActiveWindow
-        if (root == null) { hideAll(); return }
+        if (root == null) { hideWindows(); return }
 
-        val items = ArrayList<Item>()
-        collect(root, items)
-        lastItems = items
-        chatRect = findChatRect(root)
+        val rows = ArrayList<Row>()
+        val scrollers = ArrayList<Rect>()
+        collect(root, rows, scrollers)
+        chatRect = scrollers.maxByOrNull { it.width() * it.height() }
+        lastRows = rows
+        mergeHistory(rows)
 
-        for (item in items) {
-            val key = item.text
+        for (row in rows) {
+            if (!row.enc) continue
+            val key = row.text
             if (results.containsKey(key) || !pending.add(key)) continue
             worker.execute {
                 val plain = try { CryptoEngine.decryptText(pw, key) } catch (ex: Exception) { "" }
@@ -238,88 +247,60 @@ class HashtagAccessibilityService : AccessibilityService() {
         refreshUi()
     }
 
-    private fun collect(n: AccessibilityNodeInfo, out: MutableList<Item>) {
+    private fun collect(n: AccessibilityNodeInfo, out: MutableList<Row>, scrollers: MutableList<Rect>) {
+        val cls = n.className?.toString().orEmpty()
+        if (n.isScrollable && (cls.contains("RecyclerView") || cls.contains("ListView"))) {
+            val r = Rect(); n.getBoundsInScreen(r); scrollers.add(r)
+        }
         val t = n.text?.toString()
-        if (t != null && t.length >= 40 && t.startsWith("RU5DMg") && !n.isEditable && n.isVisibleToUser) {
-            val r = Rect()
-            n.getBoundsInScreen(r)
-            if (!r.isEmpty) out.add(Item(t.trim(), r))
+        if (t != null && t.isNotBlank() && !n.isEditable && n.isVisibleToUser) {
+            val enc = t.length >= 40 && t.startsWith("RU5DMg")
+            val id = n.viewIdResourceName.orEmpty()
+            if (enc || id.endsWith(":id/message_text")) {
+                val r = Rect(); n.getBoundsInScreen(r)
+                if (!r.isEmpty) out.add(Row(t.trim(), enc, r))
+            }
         }
         for (i in 0 until n.childCount) {
             val c = n.getChild(i) ?: continue
-            collect(c, out)
+            collect(c, out, scrollers)
         }
     }
 
-    /** The chat list = the biggest scrollable area on screen. */
-    private fun findChatRect(root: AccessibilityNodeInfo): Rect? {
-        var best: Rect? = null
-        var bestArea = 0L
-        fun walk(n: AccessibilityNodeInfo, depth: Int) {
-            if (n.isScrollable && n.isVisibleToUser) {
-                val r = Rect()
-                n.getBoundsInScreen(r)
-                val area = r.width().toLong() * r.height()
-                if (area > bestArea) { bestArea = area; best = Rect(r) }
-            }
-            if (depth > 25) return
-            for (i in 0 until n.childCount) {
-                val c = n.getChild(i) ?: continue
-                walk(c, depth + 1)
-            }
-        }
-        walk(root, 0)
-        return best
-    }
-
-    /** Whole decrypted conversation: what is on screen now merged into the history we already have. */
-    private fun decryptedMessages(): List<Msg> {
-        if (lastItems.isEmpty()) { log.clear(); logMsg.clear(); return emptyList() }
+    /**
+     * Keep an ordered conversation: the visible window v is authoritative for the region it covers,
+     * older/newer messages already seen stay around it. Encrypted messages (unique) act as anchors.
+     */
+    private fun mergeHistory(rows: List<Row>) {
         val w = resources.displayMetrics.widthPixels
-        val visible = lastItems
-            .sortedBy { it.rect.top }
-            .filter { !results[it.text].isNullOrEmpty() }
-            .distinctBy { it.text }
-        for (v in visible) {
-            if (!logMsg.containsKey(v.text)) logMsg[v.text] = Msg(results[v.text]!!, v.rect.left > w * 0.10)
-        }
-        mergeLog(visible.map { it.text })
-        return log.mapNotNull { logMsg[it] }
-    }
-
-    private fun mergeLog(v: List<String>) {
+        val v = rows.sortedBy { it.rect.top }.map { Hist(it.text, it.enc, it.rect.left > w * 0.10) }
         if (v.isEmpty()) return
-        val vs = v.toSet()
-        if (log.none { it in vs }) {          // no overlap: different chat or a big jump -> start over
-            log.clear(); logMsg.keys.retainAll(vs); log.addAll(v); return
-        }
-        val known = HashSet(log)
-        for ((i, k) in v.withIndex()) {
-            if (k in known) continue
-            var j = i - 1
-            while (j >= 0 && v[j] !in known) j--
-            if (j >= 0) {
-                log.add(log.indexOf(v[j]) + 1, k)
-            } else {
-                var n = i + 1
-                while (n < v.size && v[n] !in known) n++
-                if (n < v.size) log.add(log.indexOf(v[n]), k) else continue
-            }
-            known.add(k)
-        }
-        while (log.size > 500) logMsg.remove(log.removeAt(0))
+        val known = history.filter { it.enc }.map { it.text }.toHashSet()
+        val firstA = v.indexOfFirst { it.enc && it.text in known }
+        val lastA = v.indexOfLast { it.enc && it.text in known }
+        if (firstA < 0) { history = v; return }
+        val hFirst = history.indexOfFirst { it.enc && it.text == v[firstA].text }
+        val hLast = history.indexOfFirst { it.enc && it.text == v[lastA].text }
+        if (hFirst < 0 || hLast < hFirst) { history = v; return }
+        val head = history.subList(0, maxOf(0, hFirst - firstA))
+        val tailStart = minOf(history.size, hLast + 1 + (v.size - 1 - lastA))
+        val tail = history.subList(tailStart, history.size)
+        var merged = head + v + tail
+        if (merged.size > MAX_HISTORY) merged = merged.subList(merged.size - MAX_HISTORY, merged.size)
+        history = merged
     }
 
-    // ------------------------------------------------------------ UI: pill + panel
+    // ------------------------------------------------------------ UI: pill + reader
 
     private fun refreshUi() {
-        if (sessionPassword == null || !whatsappInForeground()) { hideAll(); return }
-        val msgs = decryptedMessages()
-        if (msgs.isNotEmpty()) lastUse = System.currentTimeMillis()
+        if (sessionPassword == null || !whatsappInForeground()) { hideWindows(); return }
+        val visibleDec = lastRows.count { it.enc && !results[it.text].isNullOrEmpty() }
+        if (visibleDec > 0) lastUse = System.currentTimeMillis()
         if (sheetWanted) {
-            hidePill(); showSheet(msgs)
-        } else if (msgs.isNotEmpty()) {
-            hideSheet(); showPill(msgs.size)
+            hidePill()
+            if (history.isNotEmpty()) showSheet() else hideSheet()
+        } else if (visibleDec > 0) {
+            hideSheet(); showPill(visibleDec)
         } else {
             hideSheet(); hidePill()
         }
@@ -365,60 +346,39 @@ class HashtagAccessibilityService : AccessibilityService() {
         pill = null
     }
 
-    private fun showSheet(msgs: List<Msg>) {
-        if (sheet == null) createSheet()
-        applySheetBounds()
-        sheetTitle?.text = if (msgs.isEmpty()) "🔓 No encrypted messages in this chat" else "🔓 Secure chat · ${msgs.size}"
-        val sig = msgs.joinToString("\u0001") { (if (it.mine) "M" else "T") + it.plain }
-        if (sig == sheetSignature) return
-        val sc = sheetScroll
-        val list = sheetList ?: return
-        val firstBuild = sheetSignature.isEmpty()
-        val atBottom = firstBuild || sc == null || sc.scrollY + sc.height >= list.height - dp(48)
-        val y = sc?.scrollY ?: 0
-        sheetSignature = sig
-        list.removeAllViews()
-        for (m in msgs) {
-            val tv = TextView(this).apply {
-                text = m.plain
-                textSize = 16f
-                setTextColor(0xFFE9EDEF.toInt())
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                maxWidth = (resources.displayMetrics.widthPixels * 0.82).toInt()
-                background = GradientDrawable().apply {
-                    setColor(if (m.mine) 0xFF005C4B.toInt() else 0xFF202C33.toInt())
-                    cornerRadius = dp(12).toFloat()
-                }
-                setOnClickListener { copyText(m.plain) }
-            }
-            val lp = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = if (m.mine) Gravity.END else Gravity.START
-                bottomMargin = dp(6)
-            }
-            list.addView(tv, lp)
+    private fun showSheet() {
+        val cr = chatRect
+        val anchored = cr != null && cr.height() > dp(120)
+        val y = if (anchored) cr!!.top else 0
+        val h = if (anchored) cr!!.height() else (resources.displayMetrics.heightPixels * 0.42).toInt()
+        if (sheet != null && sheetAnchored != anchored) hideSheet()
+        if (sheet == null) createSheet(y, h, anchored)
+
+        // follow the chat area (e.g. when the keyboard opens)
+        val v = sheet!!
+        val lp = v.layoutParams as WindowManager.LayoutParams
+        if (abs(lp.height - h) > 4 || (anchored && abs(lp.y - y) > 4 && !offsetFixPending)) {
+            lp.height = h
+            if (anchored) lp.y = y + yCorrection
+            runCatching { wm.updateViewLayout(v, lp) }
         }
-        sc?.post { if (atBottom) sc.fullScroll(View.FOCUS_DOWN) else sc.scrollTo(0, y) }
+
+        val decrypted = history.count { it.enc && !results[it.text].isNullOrEmpty() }
+        sheetTitle?.text = "🔓 Decrypted chat · $decrypted"
+        val sig = history.joinToString("\u0001") {
+            (if (it.mine) "M" else "T") + (if (it.enc) "E" else "P") + (results[it.text] ?: if (it.enc) "?" else it.text)
+        }
+        if (sig != sheetSignature) { sheetSignature = sig; rebuildList() }
     }
 
-    /** Keep the panel exactly on top of WhatsApp's chat list (also follows the keyboard opening/closing). */
-    private fun applySheetBounds() {
-        val s = sheet ?: return
-        val dm = resources.displayMetrics
-        val r = chatRect ?: Rect(0, dp(112), dm.widthPixels, dm.heightPixels - dp(140))
-        val lp = s.layoutParams as? WindowManager.LayoutParams ?: return
-        if (lp.x != r.left || lp.y != r.top || lp.width != r.width() || lp.height != r.height()) {
-            lp.x = r.left; lp.y = r.top; lp.width = r.width(); lp.height = r.height()
-            runCatching { wm.updateViewLayout(s, lp) }
-        }
-    }
+    private var yCorrection = 0
+    private var offsetFixPending = false
 
-    private fun createSheet() {
+    private fun createSheet(y: Int, h: Int, anchored: Boolean) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(6), dp(12), dp(8))
-            setBackgroundColor(0xFF0B141A.toInt())
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = GradientDrawable().apply { setColor(0xFF0B1115.toInt()) }
         }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -435,40 +395,172 @@ class HashtagAccessibilityService : AccessibilityService() {
             setOnClickListener { onClick() }
         }
         header.addView(button("Lock") { lock(true) })
-        header.addView(button("✕ Normal chat") { sheetWanted = false; refreshUi() })
+        header.addView(button("✕") { sheetWanted = false; refreshUi() })
         root.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val scroll = ScrollView(this).apply { addView(list) }
-        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-
-        val lp = WindowManager.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            if (android.os.Build.VERSION.SDK_INT >= 28) {
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        val scroll = ScrollView(this).apply {
+            addView(list)
+            setOnScrollChangeListener { v, _, scrollY, _, oldY ->
+                if (rebuilding) return@setOnScrollChangeListener
+                val sv = v as ScrollView
+                val child = sv.getChildAt(0) ?: return@setOnScrollChangeListener
+                if (scrollY < oldY && scrollY <= dp(60)) requestChatScroll(false)
+                else if (scrollY > oldY && scrollY + sv.height >= child.height - dp(60)) requestChatScroll(true)
             }
         }
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        if (anchored) flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        val lp = WindowManager.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, h,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, flags, PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            this.y = y
+        }
         wm.addView(root, lp)
-        sheet = root; sheetList = list; sheetScroll = scroll; sheetTitle = title
+        sheet = root; sheetAnchored = anchored
+        sheetList = list; sheetScroll = scroll; sheetTitle = title
+        sheetSignature = ""; yCorrection = 0
+
+        if (anchored) {
+            // some phones offset the window (display cutout): measure once and correct
+            offsetFixPending = true
+            root.post {
+                val loc = IntArray(2)
+                if (root.isAttachedToWindow) {
+                    root.getLocationOnScreen(loc)
+                    val diff = loc[1] - y
+                    if (abs(diff) > 2) {
+                        yCorrection -= diff
+                        lp.y = y + yCorrection
+                        runCatching { wm.updateViewLayout(root, lp) }
+                    }
+                }
+                offsetFixPending = false
+            }
+        }
+    }
+
+    private fun rebuildList() {
+        val list = sheetList ?: return
+        val sv = sheetScroll ?: return
+        val oldContentH = list.height
+        val distFromBottom = oldContentH - sv.scrollY - sv.height
+        val wasAtBottom = oldContentH == 0 || distFromBottom < dp(24)
+
+        rebuilding = true
+        list.removeAllViews()
+
+        val older = TextView(this).apply {
+            text = "⬆ older messages"
+            setTextColor(0xFF7FA79E.toInt()); textSize = 13f
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(10))
+            setOnClickListener { lastChatScroll = 0; requestChatScroll(false) }
+        }
+        list.addView(older, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val maxW = (resources.displayMetrics.widthPixels * 0.82).toInt()
+        for (m in history) {
+            val dec = if (m.enc) results[m.text] else null
+            val label: String
+            val bg: Int
+            val fg: Int
+            var copyable = true
+            when {
+                !m.enc -> {
+                    label = m.text
+                    bg = if (m.mine) 0xFF16302B.toInt() else 0xFF1C252B.toInt()
+                    fg = 0xFFB9C4CA.toInt()
+                }
+                dec == null -> {
+                    label = "…"
+                    bg = 0xFF1C252B.toInt(); fg = 0xFF7D8C94.toInt(); copyable = false
+                }
+                dec.isEmpty() -> {
+                    label = "🔒 Different password"
+                    bg = 0xFF2B2230.toInt(); fg = 0xFFC9A9D6.toInt(); copyable = false
+                }
+                else -> {
+                    label = dec
+                    bg = if (m.mine) 0xFF0B5D4B.toInt() else 0xFF2A343B.toInt()
+                    fg = 0xFFE9EDEF.toInt()
+                }
+            }
+            val tv = TextView(this).apply {
+                text = label
+                textSize = 16f
+                setTextColor(fg)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                maxWidth = maxW
+                background = GradientDrawable().apply { setColor(bg); cornerRadius = dp(14).toFloat() }
+                if (copyable) setOnClickListener { copyText(label) }
+            }
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = if (m.mine) Gravity.END else Gravity.START
+                bottomMargin = dp(6)
+            }
+            list.addView(tv, lp)
+        }
+
+        sv.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                sv.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                val newH = list.height
+                val target = if (wasAtBottom) newH - sv.height else newH - sv.height - distFromBottom
+                sv.scrollTo(0, maxOf(0, target))
+                rebuilding = false
+            }
+        })
+    }
+
+    /** Scroll WhatsApp's own message list one page so older/newer messages get loaded into the reader. */
+    private fun requestChatScroll(forward: Boolean) {
+        val now = System.currentTimeMillis()
+        if (now - lastChatScroll < 700) return
+        lastChatScroll = now
+        val root = rootInActiveWindow ?: return
+        val list = findChatList(root) ?: return
+        list.performAction(
+            if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        )
+    }
+
+    private fun findChatList(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var best: AccessibilityNodeInfo? = null
+        var bestArea = 0
+        fun walk(n: AccessibilityNodeInfo) {
+            val cls = n.className?.toString().orEmpty()
+            if (n.isScrollable && (cls.contains("RecyclerView") || cls.contains("ListView"))) {
+                val r = Rect(); n.getBoundsInScreen(r)
+                val a = r.width() * r.height()
+                if (a > bestArea) { bestArea = a; best = n }
+            }
+            for (i in 0 until n.childCount) { n.getChild(i)?.let { walk(it) } }
+        }
+        walk(root)
+        return best
     }
 
     private fun hideSheet() {
         sheet?.let { runCatching { wm.removeView(it) } }
-        sheet = null; sheetList = null; sheetScroll = null; sheetTitle = null; sheetSignature = ""
+        sheet = null; sheetList = null; sheetScroll = null; sheetTitle = null
+        sheetSignature = ""; rebuilding = false
     }
 
-    private fun hideAll() {
-        sheetWanted = false
+    /** Remove every window we draw. Keeps the password and the reader on/off choice. */
+    private fun hideWindows() {
         hideSheet(); hidePill()
         main.removeCallbacks(watchdog)
+        history = emptyList(); lastRows = emptyList()
     }
 
     private fun copyText(text: String) {
@@ -481,7 +573,7 @@ class HashtagAccessibilityService : AccessibilityService() {
     private val watchdog = object : Runnable {
         override fun run() {
             if (sheet == null && pill == null) return
-            if (!whatsappInForeground()) { hideAll(); return }
+            if (!whatsappInForeground()) { hideWindows(); return }
             main.postDelayed(this, 300)
         }
     }
@@ -529,10 +621,10 @@ class HashtagAccessibilityService : AccessibilityService() {
         popup = null
     }
 
-    override fun onInterrupt() { dismissPopup(); hideAll() }
+    override fun onInterrupt() { dismissPopup(); hideWindows() }
 
     override fun onDestroy() {
-        dismissPopup(); hideAll()
+        dismissPopup(); hideWindows()
         sessionPassword = null
         worker.shutdownNow()
         super.onDestroy()
