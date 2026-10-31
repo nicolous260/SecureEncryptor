@@ -1,4 +1,4 @@
-package com.secureencryptor.app.notif
+package com.secureencryptor.app.crypto
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec

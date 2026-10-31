@@ -130,8 +130,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             HeaderSection()
 
             // WhatsApp # mode
-            NotificationModeCard()
-
             WhatsAppModeCard()
 
             // Password Card
