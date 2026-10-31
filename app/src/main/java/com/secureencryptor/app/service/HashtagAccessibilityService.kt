@@ -60,6 +60,9 @@ class HashtagAccessibilityService : AccessibilityService() {
     private val pending = HashSet<String>()
     private var lastItems: List<Item> = emptyList()
     private var scanScheduled = false
+    private var chatRect: Rect? = null
+    private val log = ArrayList<String>()            // ciphertext keys in chat order (history)
+    private val logMsg = HashMap<String, Msg>()
 
     private var sheet: LinearLayout? = null
     private var sheetList: LinearLayout? = null
@@ -102,6 +105,7 @@ class HashtagAccessibilityService : AccessibilityService() {
             sessionPassword = m.groupValues[1]
             lastUse = System.currentTimeMillis()
             results.clear(); pending.clear(); sheetSignature = ""
+            log.clear(); logMsg.clear()
             sheetWanted = true
             setField(node, "")
             Toast.makeText(this, "Password set. Write  message#  to send encrypted", Toast.LENGTH_LONG).show()
@@ -197,6 +201,7 @@ class HashtagAccessibilityService : AccessibilityService() {
     private fun lock(announce: Boolean) {
         sessionPassword = null
         results.clear(); pending.clear(); lastItems = emptyList(); sheetSignature = ""
+        log.clear(); logMsg.clear()
         hideAll()
         if (announce) Toast.makeText(this, "Locked", Toast.LENGTH_SHORT).show()
     }
@@ -217,6 +222,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         val items = ArrayList<Item>()
         collect(root, items)
         lastItems = items
+        chatRect = findChatRect(root)
 
         for (item in items) {
             val key = item.text
@@ -245,13 +251,63 @@ class HashtagAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** The chat list = the biggest scrollable area on screen. */
+    private fun findChatRect(root: AccessibilityNodeInfo): Rect? {
+        var best: Rect? = null
+        var bestArea = 0L
+        fun walk(n: AccessibilityNodeInfo, depth: Int) {
+            if (n.isScrollable && n.isVisibleToUser) {
+                val r = Rect()
+                n.getBoundsInScreen(r)
+                val area = r.width().toLong() * r.height()
+                if (area > bestArea) { bestArea = area; best = Rect(r) }
+            }
+            if (depth > 25) return
+            for (i in 0 until n.childCount) {
+                val c = n.getChild(i) ?: continue
+                walk(c, depth + 1)
+            }
+        }
+        walk(root, 0)
+        return best
+    }
+
+    /** Whole decrypted conversation: what is on screen now merged into the history we already have. */
     private fun decryptedMessages(): List<Msg> {
+        if (lastItems.isEmpty()) { log.clear(); logMsg.clear(); return emptyList() }
         val w = resources.displayMetrics.widthPixels
-        return lastItems
+        val visible = lastItems
             .sortedBy { it.rect.top }
             .filter { !results[it.text].isNullOrEmpty() }
             .distinctBy { it.text }
-            .map { Msg(results[it.text]!!, it.rect.left > w * 0.10) }
+        for (v in visible) {
+            if (!logMsg.containsKey(v.text)) logMsg[v.text] = Msg(results[v.text]!!, v.rect.left > w * 0.10)
+        }
+        mergeLog(visible.map { it.text })
+        return log.mapNotNull { logMsg[it] }
+    }
+
+    private fun mergeLog(v: List<String>) {
+        if (v.isEmpty()) return
+        val vs = v.toSet()
+        if (log.none { it in vs }) {          // no overlap: different chat or a big jump -> start over
+            log.clear(); logMsg.keys.retainAll(vs); log.addAll(v); return
+        }
+        val known = HashSet(log)
+        for ((i, k) in v.withIndex()) {
+            if (k in known) continue
+            var j = i - 1
+            while (j >= 0 && v[j] !in known) j--
+            if (j >= 0) {
+                log.add(log.indexOf(v[j]) + 1, k)
+            } else {
+                var n = i + 1
+                while (n < v.size && v[n] !in known) n++
+                if (n < v.size) log.add(log.indexOf(v[n]), k) else continue
+            }
+            known.add(k)
+        }
+        while (log.size > 500) logMsg.remove(log.removeAt(0))
     }
 
     // ------------------------------------------------------------ UI: pill + panel
@@ -311,11 +367,16 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private fun showSheet(msgs: List<Msg>) {
         if (sheet == null) createSheet()
-        sheetTitle?.text = if (msgs.isEmpty()) "🔓 No encrypted messages in view" else "🔓 Decrypted · ${msgs.size}"
+        applySheetBounds()
+        sheetTitle?.text = if (msgs.isEmpty()) "🔓 No encrypted messages in this chat" else "🔓 Secure chat · ${msgs.size}"
         val sig = msgs.joinToString("\u0001") { (if (it.mine) "M" else "T") + it.plain }
         if (sig == sheetSignature) return
-        sheetSignature = sig
+        val sc = sheetScroll
         val list = sheetList ?: return
+        val firstBuild = sheetSignature.isEmpty()
+        val atBottom = firstBuild || sc == null || sc.scrollY + sc.height >= list.height - dp(48)
+        val y = sc?.scrollY ?: 0
+        sheetSignature = sig
         list.removeAllViews()
         for (m in msgs) {
             val tv = TextView(this).apply {
@@ -325,8 +386,8 @@ class HashtagAccessibilityService : AccessibilityService() {
                 setPadding(dp(12), dp(8), dp(12), dp(8))
                 maxWidth = (resources.displayMetrics.widthPixels * 0.82).toInt()
                 background = GradientDrawable().apply {
-                    setColor(if (m.mine) 0xFF0B5D4B.toInt() else 0xFF2A343B.toInt())
-                    cornerRadius = dp(14).toFloat()
+                    setColor(if (m.mine) 0xFF005C4B.toInt() else 0xFF202C33.toInt())
+                    cornerRadius = dp(12).toFloat()
                 }
                 setOnClickListener { copyText(m.plain) }
             }
@@ -338,18 +399,26 @@ class HashtagAccessibilityService : AccessibilityService() {
             }
             list.addView(tv, lp)
         }
-        sheetScroll?.post { sheetScroll?.fullScroll(View.FOCUS_DOWN) }
+        sc?.post { if (atBottom) sc.fullScroll(View.FOCUS_DOWN) else sc.scrollTo(0, y) }
+    }
+
+    /** Keep the panel exactly on top of WhatsApp's chat list (also follows the keyboard opening/closing). */
+    private fun applySheetBounds() {
+        val s = sheet ?: return
+        val dm = resources.displayMetrics
+        val r = chatRect ?: Rect(0, dp(112), dm.widthPixels, dm.heightPixels - dp(140))
+        val lp = s.layoutParams as? WindowManager.LayoutParams ?: return
+        if (lp.x != r.left || lp.y != r.top || lp.width != r.width() || lp.height != r.height()) {
+            lp.x = r.left; lp.y = r.top; lp.width = r.width(); lp.height = r.height()
+            runCatching { wm.updateViewLayout(s, lp) }
+        }
     }
 
     private fun createSheet() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(8), dp(14), dp(10))
-            val r = dp(20).toFloat()
-            background = GradientDrawable().apply {
-                setColor(0xF2121A1F.toInt())
-                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, r, r, r, r)
-            }
+            setPadding(dp(12), dp(6), dp(12), dp(8))
+            setBackgroundColor(0xFF0B141A.toInt())
         }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -366,7 +435,7 @@ class HashtagAccessibilityService : AccessibilityService() {
             setOnClickListener { onClick() }
         }
         header.addView(button("Lock") { lock(true) })
-        header.addView(button("✕") { sheetWanted = false; refreshUi() })
+        header.addView(button("✕ Normal chat") { sheetWanted = false; refreshUi() })
         root.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -375,12 +444,18 @@ class HashtagAccessibilityService : AccessibilityService() {
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         val lp = WindowManager.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            (resources.displayMetrics.heightPixels * 0.42).toInt(),
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP }
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         wm.addView(root, lp)
         sheet = root; sheetList = list; sheetScroll = scroll; sheetTitle = title
     }

@@ -43,7 +43,7 @@ fun WhatsAppModeCard() {
             Text(
                 "1. Type #password#  (once; same password for both people)\n" +
                 "2. Type message#  -> encrypted and sent automatically\n" +
-                "3. Tap the green \uD83D\uDD13 button in the chat to read received messages\n" +
+                "3. The green \uD83D\uDD13 panel replaces the chat with the decrypted conversation\n" +
                 "Type ## to lock",
                 fontSize = 13.sp, color = TextSecondary
             )
