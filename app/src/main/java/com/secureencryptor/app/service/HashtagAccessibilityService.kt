@@ -1,6 +1,7 @@
 package com.secureencryptor.app.service
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -8,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Display
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -44,6 +46,11 @@ class HashtagAccessibilityService : AccessibilityService() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 200
     }
     private val pending = HashSet<String>()
+    // ciphertext -> bubble colour sampled from the screen (main thread only)
+    private val colors = HashMap<String, Int>()
+    private var shotInFlight = false
+    private var shotFailed = false
+    private val fallbackBg = 0xFF1F2A30.toInt()
     private var lastItems: List<Item> = emptyList()
     private var scanScheduled = false
 
@@ -153,7 +160,7 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private fun lock(announce: Boolean) {
         sessionPassword = null
-        results.clear(); pending.clear(); lastItems = emptyList()
+        results.clear(); pending.clear(); colors.clear(); shotFailed = false; lastItems = emptyList()
         clearLayer()
         if (announce) Toast.makeText(this, "Locked", Toast.LENGTH_SHORT).show()
     }
@@ -185,7 +192,52 @@ class HashtagAccessibilityService : AccessibilityService() {
                 }
             }
         }
+        requestColors(items)
         render()
+    }
+
+    /** Sample each bubble's background colour (API 30+) so the overlay blends in. */
+    private fun requestColors(items: List<Item>) {
+        if (Build.VERSION.SDK_INT < 30 || shotFailed || shotInFlight) return
+        val missing = items.filter { colors[it.text] == null }
+        if (missing.isEmpty()) return
+        shotInFlight = true
+        val inset = (4 * resources.displayMetrics.density).toInt()
+        takeScreenshot(Display.DEFAULT_DISPLAY, worker, object : TakeScreenshotCallback {
+            override fun onSuccess(shot: ScreenshotResult) {
+                val found = HashMap<String, Int>()
+                try {
+                    val hw = shot.hardwareBuffer
+                    val bmp = Bitmap.wrapHardwareBuffer(hw, shot.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
+                    hw.close()
+                    if (bmp != null) {
+                        for (m in missing) {
+                            val x = (m.rect.left - inset).coerceIn(0, bmp.width - 1)
+                            val y = (m.rect.top + m.rect.height() / 2).coerceIn(0, bmp.height - 1)
+                            found[m.text] = bmp.getPixel(x, y) or 0xFF000000.toInt()
+                        }
+                        bmp.recycle()
+                    }
+                } catch (ex: Exception) { /* fall back below */ }
+                main.post {
+                    shotInFlight = false
+                    if (found.isEmpty()) shotFailed = true else colors.putAll(found)
+                    render()
+                }
+            }
+
+            override fun onFailure(errorCode: Int) {
+                main.post {
+                    shotInFlight = false
+                    if (errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                        main.postDelayed({ scheduleScan() }, 500)
+                    } else {
+                        shotFailed = true
+                    }
+                    render()
+                }
+            }
+        })
     }
 
     private fun collect(n: AccessibilityNodeInfo, out: MutableList<Item>) {
@@ -202,7 +254,14 @@ class HashtagAccessibilityService : AccessibilityService() {
     }
 
     private fun render() {
-        val shown = lastItems.filter { !results[it.text].isNullOrEmpty() }
+        val shown = ArrayList<Triple<Item, String, Int>>()
+        for (item in lastItems) {
+            val plain = results[item.text]
+            if (plain.isNullOrEmpty()) continue
+            val bg = colors[item.text]
+                ?: if (Build.VERSION.SDK_INT < 30 || shotFailed) fallbackBg else continue
+            shown.add(Triple(item, plain, bg))
+        }
         if (shown.isEmpty()) { clearLayer(); return }
         lastUse = System.currentTimeMillis()
 
@@ -210,19 +269,21 @@ class HashtagAccessibilityService : AccessibilityService() {
         val loc = IntArray(2)
         if (l.isAttachedToWindow) l.getLocationOnScreen(loc)
         l.removeAllViews()
-        for (item in shown) {
-            val pad = 6
+        for ((item, plain, bg) in shown) {
+            val lum = (0.299 * Color.red(bg) + 0.587 * Color.green(bg) + 0.114 * Color.blue(bg)) / 255.0
             val tv = TextView(this).apply {
-                text = results[item.text]
-                setTextColor(Color.WHITE)
-                textSize = 15f
-                setBackgroundColor(0xFF0B3D2E.toInt())
-                setPadding(12, 6, 12, 6)
+                text = plain
+                setTextColor(if (lum > 0.6) 0xFF111B21.toInt() else 0xFFE9EDEF.toInt())
+                textSize = 16f
+                includeFontPadding = false
+                setBackgroundColor(bg)
+                setPadding(0, 0, 0, 0)
                 gravity = Gravity.TOP or Gravity.START
             }
-            val lp = FrameLayout.LayoutParams(item.rect.width() + pad * 2, item.rect.height() + pad * 2)
-            lp.leftMargin = item.rect.left - pad - loc[0]
-            lp.topMargin = item.rect.top - pad - loc[1]
+            // cover exactly the ciphertext text block, so the text sits where WhatsApp text would
+            val lp = FrameLayout.LayoutParams(item.rect.width() + 2, item.rect.height() + 2)
+            lp.leftMargin = item.rect.left - 1 - loc[0]
+            lp.topMargin = item.rect.top - 1 - loc[1]
             l.addView(tv, lp)
         }
     }
