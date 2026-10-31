@@ -92,7 +92,7 @@ private fun TopBar(title: String, left: String, onLeft: () -> Unit, right: Strin
 }
 
 @Composable
-private fun ConversationList(ctx: Context, version: Int, onOpen: (String) -> Unit, onClose: () -> Unit) {
+private fun ColumnScope.ConversationList(ctx: Context, version: Int, onOpen: (String) -> Unit, onClose: () -> Unit) {
     val convs = remember(version) { ChatStore.conversations(ctx) }
     TopBar("Secure messages", "BACK", onClose, "CLEAR") { ChatStore.clear(ctx) }
     if (convs.isEmpty()) {
@@ -128,7 +128,7 @@ private fun ConversationList(ctx: Context, version: Int, onOpen: (String) -> Uni
 }
 
 @Composable
-private fun Conversation(ctx: Context, conv: String, version: Int, onBack: () -> Unit) {
+private fun ColumnScope.Conversation(ctx: Context, conv: String, version: Int, onBack: () -> Unit) {
     val msgs = remember(version, conv) { ChatStore.messages(ctx, conv) }
     TopBar(conv, "BACK", onBack)
     val listState = rememberLazyListState()
