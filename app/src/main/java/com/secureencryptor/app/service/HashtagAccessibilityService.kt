@@ -359,7 +359,7 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private fun showPill(count: Int) {
         val p = pill ?: createPill()
-        p.text = "🔓 $count"
+        p.text = "Secure · $count"
     }
 
     private fun createPill(): TextView {
@@ -411,7 +411,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         }
 
         val decrypted = history.count { it.enc && !results[it.text].isNullOrEmpty() }
-        sheetTitle?.text = "🔒 Secure chat · $decrypted"
+        sheetTitle?.text = "Secure chat · $decrypted"
         val sig = history.joinToString("\u0001") {
             (if (it.mine) "M" else "T") + (if (it.enc) "E" else "P") + it.time + (results[it.text] ?: if (it.enc) "?" else it.text)
         }
@@ -442,7 +442,7 @@ class HashtagAccessibilityService : AccessibilityService() {
             setOnClickListener { onClick() }
         }
         header.addView(button("LOCK") { lock(true) })
-        header.addView(button("✕") { sheetWanted = false; refreshUi() })
+        header.addView(button("CLOSE") { sheetWanted = false; refreshUi() })
         root.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -484,7 +484,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         col.addView(rName); col.addView(rText)
         bar.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val closeReply = TextView(this).apply {
-            text = "✕"; setTextColor(0xFFB6C0C6.toInt()); textSize = 16f
+            text = "CANCEL"; setTextColor(0xFF25D366.toInt()); textSize = 13f; typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(14), dp(8), dp(14), dp(8))
             setOnClickListener { replyTo = null; updateReplyBar() }
         }
@@ -548,7 +548,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         list.removeAllViews()
 
         val older = TextView(this).apply {
-            text = "⬆ older messages"
+            text = "Load older messages"
             setTextColor(0xFF7FA79E.toInt()); textSize = 12f
             gravity = Gravity.CENTER
             setPadding(0, dp(6), 0, dp(8))
@@ -596,7 +596,7 @@ class HashtagAccessibilityService : AccessibilityService() {
                 bg = 0xFF182229.toInt(); fg = 0xFF7D8C94.toInt(); interactive = false
             }
             dec.isEmpty() -> {
-                parsed = Parsed(null, null, "🔒 Different password")
+                parsed = Parsed(null, null, "Different password")
                 bg = 0xFF2B2230.toInt(); fg = 0xFFC9A9D6.toInt(); interactive = false
             }
             else -> {
