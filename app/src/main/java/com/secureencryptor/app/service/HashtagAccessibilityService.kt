@@ -44,8 +44,9 @@ import kotlin.math.abs
  */
 class HashtagAccessibilityService : AccessibilityService() {
 
-    private data class Row(val text: String, val enc: Boolean, val rect: Rect, val time: String)
-    private data class Hist(val text: String, val enc: Boolean, val mine: Boolean, val time: String)
+    private data class Raw(val text: String, val enc: Boolean, val rect: Rect, val date: Boolean)
+    private data class Row(val text: String, val enc: Boolean, val rect: Rect, val time: String, val date: Boolean)
+    private data class Hist(val text: String, val enc: Boolean, val mine: Boolean, val time: String, val date: Boolean)
     private data class Parsed(val quoteByMe: Boolean?, val quote: String?, val body: String)
     private data class ReplyTarget(val text: String, val mine: Boolean)
 
@@ -73,6 +74,7 @@ class HashtagAccessibilityService : AccessibilityService() {
     private var lastRows: List<Row> = emptyList()
     private var history: List<Hist> = emptyList()
     private var chatRect: Rect? = null
+    private var canOlder = false
     private var scanScheduled = false
 
     private var sheet: LinearLayout? = null
@@ -80,6 +82,7 @@ class HashtagAccessibilityService : AccessibilityService() {
     private var sheetList: LinearLayout? = null
     private var sheetScroll: ScrollView? = null
     private var sheetTitle: TextView? = null
+    private var sheetSub: TextView? = null
     private var replyBar: LinearLayout? = null
     private var replyName: TextView? = null
     private var replyText: TextView? = null
@@ -256,17 +259,20 @@ class HashtagAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow
         if (root == null) { hideWindows(); return }
 
-        val raw = ArrayList<Triple<String, Boolean, Rect>>()
+        val raw = ArrayList<Raw>()
         val times = ArrayList<Pair<String, Rect>>()
-        val scrollers = ArrayList<Rect>()
+        val scrollers = ArrayList<Pair<Rect, Boolean>>()
         collect(root, raw, times, scrollers)
-        chatRect = scrollers.maxByOrNull { it.width() * it.height() }
+        val best = scrollers.maxByOrNull { it.first.width() * it.first.height() }
+        chatRect = best?.first
+        canOlder = best?.second ?: false
 
-        val rows = raw.map { (t, enc, r) ->
-            val tm = times
+        val rows = raw.map { rw ->
+            val r = rw.rect
+            val tm = if (rw.date) null else times
                 .filter { it.second.top >= r.top - dp(6) && it.second.top <= r.bottom + dp(48) && it.second.right >= r.left }
                 .minByOrNull { abs(it.second.top - r.bottom) }
-            Row(t, enc, r, tm?.first.orEmpty())
+            Row(rw.text, rw.enc, r, tm?.first.orEmpty(), rw.date)
         }
         lastRows = rows
         mergeHistory(rows)
@@ -288,24 +294,25 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private fun collect(
         n: AccessibilityNodeInfo,
-        out: MutableList<Triple<String, Boolean, Rect>>,
+        out: MutableList<Raw>,
         times: MutableList<Pair<String, Rect>>,
-        scrollers: MutableList<Rect>
+        scrollers: MutableList<Pair<Rect, Boolean>>
     ) {
         val cls = n.className?.toString().orEmpty()
         if (n.isScrollable && (cls.contains("RecyclerView") || cls.contains("ListView"))) {
-            val r = Rect(); n.getBoundsInScreen(r); scrollers.add(r)
+            val r = Rect(); n.getBoundsInScreen(r)
+            val back = n.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD }
+            scrollers.add(Pair(r, back))
         }
         val t = n.text?.toString()
         if (t != null && t.isNotBlank() && !n.isEditable && n.isVisibleToUser) {
             val id = n.viewIdResourceName.orEmpty()
             val enc = t.length >= 40 && t.startsWith("RU5DMg")
-            if (enc || id.endsWith(":id/message_text")) {
-                val r = Rect(); n.getBoundsInScreen(r)
-                if (!r.isEmpty) out.add(Triple(t.trim(), enc, r))
-            } else if (id.endsWith(":id/date") && timeRe.matches(t.trim())) {
-                val r = Rect(); n.getBoundsInScreen(r)
-                times.add(Pair(t.trim(), r))
+            val r = Rect(); n.getBoundsInScreen(r)
+            if (!r.isEmpty) {
+                if (enc || id.endsWith(":id/message_text")) out.add(Raw(t.trim(), enc, r, false))
+                else if (id.contains("date_divider")) out.add(Raw(t.trim(), false, r, true))
+                else if (timeRe.matches(t.trim())) times.add(Pair(t.trim(), r))
             }
         }
         for (i in 0 until n.childCount) {
@@ -320,7 +327,7 @@ class HashtagAccessibilityService : AccessibilityService() {
      */
     private fun mergeHistory(rows: List<Row>) {
         val w = resources.displayMetrics.widthPixels
-        val v = rows.sortedBy { it.rect.top }.map { Hist(it.text, it.enc, it.rect.left > w * 0.10, it.time) }
+        val v = rows.sortedBy { it.rect.top }.map { Hist(it.text, it.enc, it.rect.left > w * 0.10, it.time, it.date) }
         if (v.isEmpty()) return
         val known = history.filter { it.enc }.map { it.text }.toHashSet()
         val firstA = v.indexOfFirst { it.enc && it.text in known }
@@ -411,11 +418,13 @@ class HashtagAccessibilityService : AccessibilityService() {
         }
 
         val decrypted = history.count { it.enc && !results[it.text].isNullOrEmpty() }
-        sheetTitle?.text = "Secure chat · $decrypted"
+        sheetTitle?.text = "Secure chat"
+        sheetSub?.text = "$decrypted decrypted messages"
         val sig = history.joinToString("\u0001") {
-            (if (it.mine) "M" else "T") + (if (it.enc) "E" else "P") + it.time + (results[it.text] ?: if (it.enc) "?" else it.text)
+            (if (it.date) "D" else "") + (if (it.mine) "M" else "T") + (if (it.enc) "E" else "P") + it.time + (results[it.text] ?: if (it.enc) "?" else it.text)
         }
-        if (sig != sheetSignature) { sheetSignature = sig; rebuildList() }
+        val fullSig = sig + "|" + canOlder
+        if (fullSig != sheetSignature) { sheetSignature = fullSig; rebuildList() }
     }
 
     private fun createSheet(y: Int, h: Int, anchored: Boolean) {
@@ -431,27 +440,32 @@ class HashtagAccessibilityService : AccessibilityService() {
             setBackgroundColor(0xFF1F2C34.toInt())
             setPadding(dp(14), dp(2), dp(4), dp(2))
         }
+        val titleCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val title = TextView(this).apply {
-            setTextColor(0xFFE9EDEF.toInt()); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFFE9EDEF.toInt()); textSize = 15f; typeface = Typeface.DEFAULT_BOLD
         }
-        header.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val sub = TextView(this).apply { setTextColor(0xFF8696A0.toInt()); textSize = 11f }
+        titleCol.addView(title); titleCol.addView(sub)
+        header.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         fun button(label: String, onClick: () -> Unit) = TextView(this).apply {
             text = label
             setTextColor(0xFF25D366.toInt()); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(12), dp(10), dp(12), dp(10))
             setOnClickListener { onClick() }
         }
-        header.addView(button("LOCK") { lock(true) })
-        header.addView(button("CLOSE") { sheetWanted = false; refreshUi() })
+        header.addView(button("Lock") { lock(true) })
+        header.addView(button("Close") { sheetWanted = false; refreshUi() })
         root.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         // messages
         val list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.BOTTOM
             setPadding(dp(10), dp(6), dp(10), dp(6))
         }
         val scroll = ScrollView(this).apply {
+            isFillViewport = true
             addView(list)
             setOnScrollChangeListener { v, _, scrollY, _, oldY ->
                 if (rebuilding) return@setOnScrollChangeListener
@@ -484,7 +498,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         col.addView(rName); col.addView(rText)
         bar.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val closeReply = TextView(this).apply {
-            text = "CANCEL"; setTextColor(0xFF25D366.toInt()); textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+            text = "Cancel"; setTextColor(0xFF25D366.toInt()); textSize = 13f; typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(14), dp(8), dp(14), dp(8))
             setOnClickListener { replyTo = null; updateReplyBar() }
         }
@@ -504,7 +518,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         }
         wm.addView(root, lp)
         sheet = root; sheetAnchored = anchored
-        sheetList = list; sheetScroll = scroll; sheetTitle = title
+        sheetList = list; sheetScroll = scroll; sheetTitle = title; sheetSub = sub
         replyBar = bar; replyName = rName; replyText = rText
         sheetSignature = ""; yCorrection = 0
         updateReplyBar()
@@ -547,17 +561,44 @@ class HashtagAccessibilityService : AccessibilityService() {
         rebuilding = true
         list.removeAllViews()
 
-        val older = TextView(this).apply {
-            text = "Load older messages"
-            setTextColor(0xFF7FA79E.toInt()); textSize = 12f
-            gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, dp(8))
-            setOnClickListener { lastChatScroll = 0; requestChatScroll(false) }
+        if (canOlder) {
+            val older = TextView(this).apply {
+                text = "Load older messages"
+                setTextColor(0xFF7FA79E.toInt()); textSize = 12f
+                gravity = Gravity.CENTER
+                setPadding(0, dp(6), 0, dp(8))
+                setOnClickListener { lastChatScroll = 0; requestChatScroll(false) }
+            }
+            list.addView(older, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        list.addView(older, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        for (m in history) list.addView(buildBubble(m), bubbleParams(m.mine))
+        var prevMine: Boolean? = null
+        var lockedRun = 0
+        fun flushLocked() {
+            if (lockedRun > 0) {
+                val label = if (lockedRun == 1) "1 message could not be decrypted"
+                else "$lockedRun messages could not be decrypted"
+                list.addView(chip(label), chipParams())
+                lockedRun = 0
+                prevMine = null
+            }
+        }
+        for (m in history) {
+            if (m.date) {
+                flushLocked()
+                list.addView(chip(m.text), chipParams())
+                prevMine = null
+                continue
+            }
+            val dec = if (m.enc) results[m.text] else null
+            if (m.enc && dec != null && dec.isEmpty()) { lockedRun++; continue }
+            flushLocked()
+            val top = if (prevMine == m.mine) dp(2) else dp(8)
+            list.addView(buildBubble(m), bubbleParams(m.mine, top))
+            prevMine = m.mine
+        }
+        flushLocked()
 
         sv.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
@@ -570,12 +611,29 @@ class HashtagAccessibilityService : AccessibilityService() {
         })
     }
 
-    private fun bubbleParams(mine: Boolean) = LinearLayout.LayoutParams(
+    private fun bubbleParams(mine: Boolean, top: Int) = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
     ).apply {
         gravity = if (mine) Gravity.END else Gravity.START
-        bottomMargin = dp(4)
+        topMargin = top
         if (mine) leftMargin = dp(40) else rightMargin = dp(40)
+    }
+
+    private fun chip(label: String) = TextView(this).apply {
+        this.text = label
+        textSize = 12f
+        setTextColor(0xFF8696A0.toInt())
+        setPadding(dp(12), dp(4), dp(12), dp(4))
+        background = GradientDrawable().apply {
+            setColor(0xFF182229.toInt()); cornerRadius = dp(8).toFloat()
+        }
+    }
+
+    private fun chipParams() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+    ).apply {
+        gravity = Gravity.CENTER_HORIZONTAL
+        topMargin = dp(8); bottomMargin = dp(4)
     }
 
     /** One WhatsApp-style bubble: optional quoted block, text, time. */
@@ -751,7 +809,7 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private fun hideSheet() {
         sheet?.let { runCatching { wm.removeView(it) } }
-        sheet = null; sheetList = null; sheetScroll = null; sheetTitle = null
+        sheet = null; sheetList = null; sheetScroll = null; sheetTitle = null; sheetSub = null
         replyBar = null; replyName = null; replyText = null
         sheetSignature = ""; rebuilding = false
     }
