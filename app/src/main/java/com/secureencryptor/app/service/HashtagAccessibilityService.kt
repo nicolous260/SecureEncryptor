@@ -12,7 +12,9 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -33,21 +35,25 @@ import kotlin.math.abs
  *
  *  PASSWORD   type  #password#      saved in memory (type again with a new word to change it). Opens the reader.
  *  SEND       type  your text#      encrypted with the saved password and sent automatically
- *  READ       the reader replaces the whole chat area with the decrypted conversation.
- *             Scroll it; at the top/bottom it scrolls WhatsApp for you to load older/newer messages.
- *             ✕ closes it (a green 🔓 button stays on the right edge to reopen it).
+ *  READ       the reader replaces the chat area with the decrypted conversation (WhatsApp look).
+ *  REPLY      swipe a message to the right in the reader (like WhatsApp), then type  your reply#
+ *             The quoted message travels inside the encrypted text.
+ *  COPY       long-press a message in the reader
  *  LOCK       type  ##   or tap "Lock" (also auto-locks after 2 h idle)
  *  ONE-OFF    type  #password,text#   (no saved password needed)
  */
 class HashtagAccessibilityService : AccessibilityService() {
 
-    private data class Row(val text: String, val enc: Boolean, val rect: Rect)
-    private data class Hist(val text: String, val enc: Boolean, val mine: Boolean)
+    private data class Row(val text: String, val enc: Boolean, val rect: Rect, val time: String)
+    private data class Hist(val text: String, val enc: Boolean, val mine: Boolean, val time: String)
+    private data class Parsed(val quoteByMe: Boolean?, val quote: String?, val body: String)
+    private data class ReplyTarget(val text: String, val mine: Boolean)
 
     companion object {
         /** After encrypting, tap WhatsApp's send button automatically. */
         const val AUTO_SEND = true
         private const val MAX_HISTORY = 400
+        private const val SEP = '⁣'   // invisible separator used for the quoted-reply wire format
     }
 
     private val worker = Executors.newSingleThreadExecutor()
@@ -57,6 +63,7 @@ class HashtagAccessibilityService : AccessibilityService() {
     private var sessionPassword: String? = null
     private var lastUse = 0L
     private var sheetWanted = false
+    private var replyTo: ReplyTarget? = null
 
     // ciphertext -> plaintext ("" = failed / other password). Main thread only.
     private val results = object : LinkedHashMap<String, String>(512, 0.75f, true) {
@@ -73,9 +80,14 @@ class HashtagAccessibilityService : AccessibilityService() {
     private var sheetList: LinearLayout? = null
     private var sheetScroll: ScrollView? = null
     private var sheetTitle: TextView? = null
+    private var replyBar: LinearLayout? = null
+    private var replyName: TextView? = null
+    private var replyText: TextView? = null
     private var sheetSignature = ""
     private var rebuilding = false
     private var lastChatScroll = 0L
+    private var yCorrection = 0
+    private var offsetFixPending = false
     private var pill: TextView? = null
     private var popup: TextView? = null
 
@@ -83,6 +95,7 @@ class HashtagAccessibilityService : AccessibilityService() {
     private val unlockRe = Regex("""^#([^,#]+)#$""")
     private val quickRe = Regex("""^([^#]+)#$""", RegexOption.DOT_MATCHES_ALL)
     private val pasteDecryptRe = Regex("""^([A-Za-z0-9+/=\s]{40,})#([^#]+)#$""")
+    private val timeRe = Regex("""^\d{1,2}[:.]\d{2}(\s?[AaPp]\.?[Mm]\.?)?$""")
 
     private val waPackages = setOf("com.whatsapp", "com.whatsapp.w4b")
     private val autoLockMs = 2 * 60 * 60 * 1000L
@@ -111,7 +124,7 @@ class HashtagAccessibilityService : AccessibilityService() {
         unlockRe.matchEntire(text)?.let { m ->
             sessionPassword = m.groupValues[1]
             lastUse = System.currentTimeMillis()
-            results.clear(); pending.clear(); sheetSignature = ""; history = emptyList()
+            results.clear(); pending.clear(); sheetSignature = ""; history = emptyList(); replyTo = null
             sheetWanted = true
             setField(node, "")
             Toast.makeText(this, "Password set. Write  message#  to send encrypted", Toast.LENGTH_LONG).show()
@@ -144,7 +157,7 @@ class HashtagAccessibilityService : AccessibilityService() {
             busy = true
             worker.execute {
                 val plain = try {
-                    CryptoEngine.decryptText(dec.groupValues[2], dec.groupValues[1])
+                    parse(CryptoEngine.decryptText(dec.groupValues[2], dec.groupValues[1])).body
                 } catch (ex: Exception) { "Wrong password or not an encrypted message" }
                 main.post { setField(node, ""); showPopup(plain) }
                 main.postDelayed({ busy = false; node.recycle() }, 250)
@@ -156,11 +169,14 @@ class HashtagAccessibilityService : AccessibilityService() {
 
     private fun encryptAndPut(node: AccessibilityNodeInfo, password: String, plain: String) {
         busy = true
+        val rt = replyTo
+        val payload = if (rt != null) buildReply(rt, plain) else plain
         worker.execute {
             try {
-                val out = CryptoEngine.encryptText(password, plain)
+                val out = CryptoEngine.encryptText(password, payload)
                 main.post {
                     setField(node, out)
+                    if (rt != null) { replyTo = null; updateReplyBar() }
                     if (AUTO_SEND) main.postDelayed({ clickSend(0) }, 300)
                 }
             } catch (ex: Exception) {
@@ -169,6 +185,20 @@ class HashtagAccessibilityService : AccessibilityService() {
                 main.postDelayed({ busy = false; node.recycle() }, 250)
             }
         }
+    }
+
+    /** Wire format: SEP 'R' ('Y'|'T') quote SEP body.  Y = quoted message was written by the replier. */
+    private fun buildReply(rt: ReplyTarget, body: String): String {
+        val q = rt.text.replace(SEP.toString(), "").replace('\n', ' ').trim().take(140)
+        return "$SEP" + "R" + (if (rt.mine) "Y" else "T") + q + SEP + body
+    }
+
+    private fun parse(p: String): Parsed {
+        if (p.length > 3 && p[0] == SEP && p[1] == 'R') {
+            val end = p.indexOf(SEP, 2)
+            if (end > 2) return Parsed(p[2] == 'Y', p.substring(3, end), p.substring(end + 1))
+        }
+        return Parsed(null, null, p)
     }
 
     private fun setField(node: AccessibilityNodeInfo, value: String) {
@@ -207,6 +237,7 @@ class HashtagAccessibilityService : AccessibilityService() {
     private fun lock(announce: Boolean) {
         sessionPassword = null
         sheetWanted = false
+        replyTo = null
         results.clear(); pending.clear()
         hideWindows()
         if (announce) Toast.makeText(this, "Locked", Toast.LENGTH_SHORT).show()
@@ -225,10 +256,18 @@ class HashtagAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow
         if (root == null) { hideWindows(); return }
 
-        val rows = ArrayList<Row>()
+        val raw = ArrayList<Triple<String, Boolean, Rect>>()
+        val times = ArrayList<Pair<String, Rect>>()
         val scrollers = ArrayList<Rect>()
-        collect(root, rows, scrollers)
+        collect(root, raw, times, scrollers)
         chatRect = scrollers.maxByOrNull { it.width() * it.height() }
+
+        val rows = raw.map { (t, enc, r) ->
+            val tm = times
+                .filter { it.second.top >= r.top - dp(6) && it.second.top <= r.bottom + dp(48) && it.second.right >= r.left }
+                .minByOrNull { abs(it.second.top - r.bottom) }
+            Row(t, enc, r, tm?.first.orEmpty())
+        }
         lastRows = rows
         mergeHistory(rows)
 
@@ -247,23 +286,31 @@ class HashtagAccessibilityService : AccessibilityService() {
         refreshUi()
     }
 
-    private fun collect(n: AccessibilityNodeInfo, out: MutableList<Row>, scrollers: MutableList<Rect>) {
+    private fun collect(
+        n: AccessibilityNodeInfo,
+        out: MutableList<Triple<String, Boolean, Rect>>,
+        times: MutableList<Pair<String, Rect>>,
+        scrollers: MutableList<Rect>
+    ) {
         val cls = n.className?.toString().orEmpty()
         if (n.isScrollable && (cls.contains("RecyclerView") || cls.contains("ListView"))) {
             val r = Rect(); n.getBoundsInScreen(r); scrollers.add(r)
         }
         val t = n.text?.toString()
         if (t != null && t.isNotBlank() && !n.isEditable && n.isVisibleToUser) {
-            val enc = t.length >= 40 && t.startsWith("RU5DMg")
             val id = n.viewIdResourceName.orEmpty()
+            val enc = t.length >= 40 && t.startsWith("RU5DMg")
             if (enc || id.endsWith(":id/message_text")) {
                 val r = Rect(); n.getBoundsInScreen(r)
-                if (!r.isEmpty) out.add(Row(t.trim(), enc, r))
+                if (!r.isEmpty) out.add(Triple(t.trim(), enc, r))
+            } else if (id.endsWith(":id/date") && timeRe.matches(t.trim())) {
+                val r = Rect(); n.getBoundsInScreen(r)
+                times.add(Pair(t.trim(), r))
             }
         }
         for (i in 0 until n.childCount) {
             val c = n.getChild(i) ?: continue
-            collect(c, out, scrollers)
+            collect(c, out, times, scrollers)
         }
     }
 
@@ -273,7 +320,7 @@ class HashtagAccessibilityService : AccessibilityService() {
      */
     private fun mergeHistory(rows: List<Row>) {
         val w = resources.displayMetrics.widthPixels
-        val v = rows.sortedBy { it.rect.top }.map { Hist(it.text, it.enc, it.rect.left > w * 0.10) }
+        val v = rows.sortedBy { it.rect.top }.map { Hist(it.text, it.enc, it.rect.left > w * 0.10, it.time) }
         if (v.isEmpty()) return
         val known = history.filter { it.enc }.map { it.text }.toHashSet()
         val firstA = v.indexOfFirst { it.enc && it.text in known }
@@ -322,7 +369,7 @@ class HashtagAccessibilityService : AccessibilityService() {
             typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(14), dp(10), dp(14), dp(10))
             background = GradientDrawable().apply {
-                setColor(0xF0128C7E.toInt()); cornerRadius = dp(24).toFloat()
+                setColor(0xF025D366.toInt()); cornerRadius = dp(24).toFloat()
             }
             setOnClickListener { sheetWanted = true; refreshUi() }
         }
@@ -357,49 +404,53 @@ class HashtagAccessibilityService : AccessibilityService() {
         // follow the chat area (e.g. when the keyboard opens)
         val v = sheet!!
         val lp = v.layoutParams as WindowManager.LayoutParams
-        if (abs(lp.height - h) > 4 || (anchored && abs(lp.y - y) > 4 && !offsetFixPending)) {
+        if (abs(lp.height - h) > 4 || (anchored && abs(lp.y - (y + yCorrection)) > 4 && !offsetFixPending)) {
             lp.height = h
             if (anchored) lp.y = y + yCorrection
             runCatching { wm.updateViewLayout(v, lp) }
         }
 
         val decrypted = history.count { it.enc && !results[it.text].isNullOrEmpty() }
-        sheetTitle?.text = "🔓 Decrypted chat · $decrypted"
+        sheetTitle?.text = "🔒 Secure chat · $decrypted"
         val sig = history.joinToString("\u0001") {
-            (if (it.mine) "M" else "T") + (if (it.enc) "E" else "P") + (results[it.text] ?: if (it.enc) "?" else it.text)
+            (if (it.mine) "M" else "T") + (if (it.enc) "E" else "P") + it.time + (results[it.text] ?: if (it.enc) "?" else it.text)
         }
         if (sig != sheetSignature) { sheetSignature = sig; rebuildList() }
     }
 
-    private var yCorrection = 0
-    private var offsetFixPending = false
-
     private fun createSheet(y: Int, h: Int, anchored: Boolean) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            background = GradientDrawable().apply { setColor(0xFF0B1115.toInt()) }
+            setBackgroundColor(0xFF0B141A.toInt())
         }
+
+        // header
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xFF1F2C34.toInt())
+            setPadding(dp(14), dp(2), dp(4), dp(2))
         }
         val title = TextView(this).apply {
-            setTextColor(0xFF9FD8CB.toInt()); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFFE9EDEF.toInt()); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
         }
         header.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         fun button(label: String, onClick: () -> Unit) = TextView(this).apply {
             text = label
-            setTextColor(0xFFE9EDEF.toInt()); textSize = 14f
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setTextColor(0xFF25D366.toInt()); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(12), dp(10), dp(12), dp(10))
             setOnClickListener { onClick() }
         }
-        header.addView(button("Lock") { lock(true) })
+        header.addView(button("LOCK") { lock(true) })
         header.addView(button("✕") { sheetWanted = false; refreshUi() })
         root.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // messages
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+        }
         val scroll = ScrollView(this).apply {
             addView(list)
             setOnScrollChangeListener { v, _, scrollY, _, oldY ->
@@ -411,6 +462,35 @@ class HashtagAccessibilityService : AccessibilityService() {
             }
         }
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // reply bar (shown after swiping a message)
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xFF1F2C34.toInt())
+            setPadding(dp(10), dp(6), dp(4), dp(6))
+            visibility = View.GONE
+        }
+        val accent = View(this).apply { setBackgroundColor(0xFF06CF9C.toInt()) }
+        bar.addView(accent, LinearLayout.LayoutParams(dp(4), dp(40)))
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), 0, dp(8), 0) }
+        val rName = TextView(this).apply {
+            setTextColor(0xFF06CF9C.toInt()); textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+        }
+        val rText = TextView(this).apply {
+            setTextColor(0xFFB6C0C6.toInt()); textSize = 14f
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+        }
+        col.addView(rName); col.addView(rText)
+        bar.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val closeReply = TextView(this).apply {
+            text = "✕"; setTextColor(0xFFB6C0C6.toInt()); textSize = 16f
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setOnClickListener { replyTo = null; updateReplyBar() }
+        }
+        bar.addView(closeReply)
+        root.addView(bar, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         if (anchored) flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -425,14 +505,16 @@ class HashtagAccessibilityService : AccessibilityService() {
         wm.addView(root, lp)
         sheet = root; sheetAnchored = anchored
         sheetList = list; sheetScroll = scroll; sheetTitle = title
+        replyBar = bar; replyName = rName; replyText = rText
         sheetSignature = ""; yCorrection = 0
+        updateReplyBar()
 
         if (anchored) {
             // some phones offset the window (display cutout): measure once and correct
             offsetFixPending = true
             root.post {
-                val loc = IntArray(2)
                 if (root.isAttachedToWindow) {
+                    val loc = IntArray(2)
                     root.getLocationOnScreen(loc)
                     val diff = loc[1] - y
                     if (abs(diff) > 2) {
@@ -444,6 +526,15 @@ class HashtagAccessibilityService : AccessibilityService() {
                 offsetFixPending = false
             }
         }
+    }
+
+    private fun updateReplyBar() {
+        val bar = replyBar ?: return
+        val rt = replyTo
+        if (rt == null) { bar.visibility = View.GONE; return }
+        replyName?.text = if (rt.mine) "You" else "Them"
+        replyText?.text = rt.text
+        bar.visibility = View.VISIBLE
     }
 
     private fun rebuildList() {
@@ -458,58 +549,15 @@ class HashtagAccessibilityService : AccessibilityService() {
 
         val older = TextView(this).apply {
             text = "⬆ older messages"
-            setTextColor(0xFF7FA79E.toInt()); textSize = 13f
+            setTextColor(0xFF7FA79E.toInt()); textSize = 12f
             gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(10))
+            setPadding(0, dp(6), 0, dp(8))
             setOnClickListener { lastChatScroll = 0; requestChatScroll(false) }
         }
         list.addView(older, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        val maxW = (resources.displayMetrics.widthPixels * 0.82).toInt()
-        for (m in history) {
-            val dec = if (m.enc) results[m.text] else null
-            val label: String
-            val bg: Int
-            val fg: Int
-            var copyable = true
-            when {
-                !m.enc -> {
-                    label = m.text
-                    bg = if (m.mine) 0xFF16302B.toInt() else 0xFF1C252B.toInt()
-                    fg = 0xFFB9C4CA.toInt()
-                }
-                dec == null -> {
-                    label = "…"
-                    bg = 0xFF1C252B.toInt(); fg = 0xFF7D8C94.toInt(); copyable = false
-                }
-                dec.isEmpty() -> {
-                    label = "🔒 Different password"
-                    bg = 0xFF2B2230.toInt(); fg = 0xFFC9A9D6.toInt(); copyable = false
-                }
-                else -> {
-                    label = dec
-                    bg = if (m.mine) 0xFF0B5D4B.toInt() else 0xFF2A343B.toInt()
-                    fg = 0xFFE9EDEF.toInt()
-                }
-            }
-            val tv = TextView(this).apply {
-                text = label
-                textSize = 16f
-                setTextColor(fg)
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                maxWidth = maxW
-                background = GradientDrawable().apply { setColor(bg); cornerRadius = dp(14).toFloat() }
-                if (copyable) setOnClickListener { copyText(label) }
-            }
-            val lp = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = if (m.mine) Gravity.END else Gravity.START
-                bottomMargin = dp(6)
-            }
-            list.addView(tv, lp)
-        }
+        for (m in history) list.addView(buildBubble(m), bubbleParams(m.mine))
 
         sv.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
@@ -520,6 +568,157 @@ class HashtagAccessibilityService : AccessibilityService() {
                 rebuilding = false
             }
         })
+    }
+
+    private fun bubbleParams(mine: Boolean) = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+    ).apply {
+        gravity = if (mine) Gravity.END else Gravity.START
+        bottomMargin = dp(4)
+        if (mine) leftMargin = dp(40) else rightMargin = dp(40)
+    }
+
+    /** One WhatsApp-style bubble: optional quoted block, text, time. */
+    private fun buildBubble(m: Hist): View {
+        val dec = if (m.enc) results[m.text] else null
+        val parsed: Parsed
+        val bg: Int
+        val fg: Int
+        var interactive = true
+        when {
+            !m.enc -> {
+                parsed = Parsed(null, null, m.text)
+                bg = if (m.mine) 0xFF0F3D35.toInt() else 0xFF182229.toInt()
+                fg = 0xFFB9C4CA.toInt()
+            }
+            dec == null -> {
+                parsed = Parsed(null, null, "…")
+                bg = 0xFF182229.toInt(); fg = 0xFF7D8C94.toInt(); interactive = false
+            }
+            dec.isEmpty() -> {
+                parsed = Parsed(null, null, "🔒 Different password")
+                bg = 0xFF2B2230.toInt(); fg = 0xFFC9A9D6.toInt(); interactive = false
+            }
+            else -> {
+                parsed = parse(dec)
+                bg = if (m.mine) 0xFF005C4B.toInt() else 0xFF202C33.toInt()
+                fg = 0xFFE9EDEF.toInt()
+            }
+        }
+
+        val maxW = (resources.displayMetrics.widthPixels * 0.76).toInt()
+        val r = dp(12).toFloat()
+        val s = dp(2).toFloat()
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(5), dp(8), dp(3))
+            background = GradientDrawable().apply {
+                setColor(bg)
+                cornerRadii = if (m.mine) floatArrayOf(r, r, s, s, r, r, r, r) else floatArrayOf(s, s, r, r, r, r, r, r)
+            }
+        }
+
+        if (parsed.quote != null) {
+            val quoteIsMine = (m.mine == (parsed.quoteByMe == true))
+            val qBox = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                background = GradientDrawable().apply {
+                    setColor(if (m.mine) 0x33000000 else 0x33000000)
+                    cornerRadius = dp(6).toFloat()
+                }
+            }
+            val bar = View(this).apply {
+                setBackgroundColor(if (quoteIsMine) 0xFF06CF9C.toInt() else 0xFFB4A7FF.toInt())
+            }
+            qBox.addView(bar, LinearLayout.LayoutParams(dp(4), ViewGroup.LayoutParams.MATCH_PARENT))
+            val qCol = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+            }
+            qCol.addView(TextView(this).apply {
+                text = if (quoteIsMine) "You" else "Them"
+                textSize = 12f; typeface = Typeface.DEFAULT_BOLD
+                setTextColor(if (quoteIsMine) 0xFF06CF9C.toInt() else 0xFFB4A7FF.toInt())
+            })
+            qCol.addView(TextView(this).apply {
+                text = parsed.quote
+                textSize = 13f
+                setTextColor(0xFFB6C0C6.toInt())
+                maxLines = 3; ellipsize = TextUtils.TruncateAt.END
+                maxWidth = maxW - dp(40)
+            })
+            qBox.addView(qCol)
+            box.addView(qBox, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(4) })
+        }
+
+        box.addView(TextView(this).apply {
+            text = parsed.body
+            textSize = 16f
+            setTextColor(fg)
+            maxWidth = maxW
+        })
+
+        if (m.time.isNotBlank()) {
+            box.addView(TextView(this).apply {
+                text = m.time
+                textSize = 11f
+                setTextColor(0xFF8696A0.toInt())
+                gravity = Gravity.END
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        if (interactive) {
+            attachGestures(
+                box,
+                onReply = {
+                    replyTo = ReplyTarget(parsed.body, m.mine)
+                    updateReplyBar()
+                },
+                onCopy = { copyText(parsed.body) }
+            )
+        }
+        return box
+    }
+
+    /** Swipe right = reply (like WhatsApp), long-press = copy. Vertical drags still scroll the list. */
+    private fun attachGestures(v: View, onReply: () -> Unit, onCopy: () -> Unit) {
+        var downX = 0f
+        var downY = 0f
+        var swiping = false
+        val longRun = Runnable { if (!swiping) onCopy() }
+        v.setOnTouchListener { view, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = ev.rawX; downY = ev.rawY; swiping = false
+                    main.postDelayed(longRun, 500)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - downX
+                    val dy = ev.rawY - downY
+                    if (!swiping && dx > dp(12) && abs(dx) > abs(dy) * 1.5f) {
+                        swiping = true
+                        main.removeCallbacks(longRun)
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    if (swiping) view.translationX = dx.coerceIn(0f, dp(90).toFloat())
+                    else if (abs(dy) > dp(10)) main.removeCallbacks(longRun)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longRun)
+                    val dx = ev.rawX - downX
+                    if (swiping && dx > dp(64) && ev.actionMasked == MotionEvent.ACTION_UP) onReply()
+                    view.animate().translationX(0f).setDuration(150).start()
+                    swiping = false
+                    true
+                }
+                else -> false
+            }
+        }
     }
 
     /** Scroll WhatsApp's own message list one page so older/newer messages get loaded into the reader. */
@@ -553,6 +752,7 @@ class HashtagAccessibilityService : AccessibilityService() {
     private fun hideSheet() {
         sheet?.let { runCatching { wm.removeView(it) } }
         sheet = null; sheetList = null; sheetScroll = null; sheetTitle = null
+        replyBar = null; replyName = null; replyText = null
         sheetSignature = ""; rebuilding = false
     }
 
