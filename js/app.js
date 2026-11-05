@@ -1,5 +1,5 @@
 /**
- * Secure Encryptor - App Module
+ * SecureEncryptor - App Module
  * Handles UI interactions, event handling, and app state
  */
 
@@ -17,7 +17,7 @@ const app = (function() {
     function init() {
         cacheElements();
         bindEvents();
-        console.log('Secure Encryptor initialized');
+        console.log('SecureEncryptor initialized');
     }
 
     /**
@@ -252,7 +252,7 @@ const app = (function() {
         if (navigator.share) {
             try {
                 await navigator.share({
-                    title: 'Secure Encryptor',
+                    title: 'SecureEncryptor',
                     text: text
                 });
             } catch (err) {

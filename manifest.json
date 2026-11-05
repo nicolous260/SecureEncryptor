@@ -1,6 +1,6 @@
 {
-    "name": "Secure Encryptor",
-    "short_name": "SecureEnc",
+    "name": "SecureEncryptor",
+    "short_name": "SecureEncryptor",
     "description": "AES-256-GCM encryption in your browser. Nothing is sent to a server.",
     "start_url": ".",
     "display": "standalone",

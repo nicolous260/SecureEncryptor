@@ -424,19 +424,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     }
                 }
-
-                // Footer
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    HorizontalDivider(color = CardBorder)
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        "AES-256-GCM · PBKDF2 · On-device only",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp,
-                        color = TextMuted
-                    )
-                }
             }
         }
     }
@@ -560,7 +547,7 @@ fun HeaderSection() {
             )
             Spacer(Modifier.width(12.dp))
             Text(
-                "Secure Encryptor",
+                "SecureEncryptor",
                 fontWeight = FontWeight.Medium,
                 fontSize = 24.sp,
                 lineHeight = 28.sp,
