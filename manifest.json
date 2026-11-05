@@ -1,11 +1,11 @@
 {
     "name": "Secure Encryptor",
     "short_name": "SecureEnc",
-    "description": "Military-grade AES-256-GCM encryption in your browser. No data sent to servers.",
+    "description": "AES-256-GCM encryption in your browser. Nothing is sent to a server.",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#f9fafb",
-    "theme_color": "#6366f1",
+    "background_color": "#141415",
+    "theme_color": "#141415",
     "orientation": "portrait-primary",
     "scope": ".",
     "icons": [

@@ -3,7 +3,7 @@
  * Provides offline functionality and caching
  */
 
-const CACHE_NAME = 'secure-encryptor-v2';
+const CACHE_NAME = 'secure-encryptor-v3';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
@@ -12,6 +12,8 @@ const STATIC_ASSETS = [
     '/js/app.js',
     '/manifest.json',
     '/assets/icon.svg',
+    '/assets/fonts/geist-latin-wght-normal.woff2',
+    '/assets/fonts/geist-mono-latin-wght-normal.woff2',
     '/offline.html'
 ];
 

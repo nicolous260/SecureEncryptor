@@ -3,59 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#141415">
     <title>Offline - Secure Encryptor</title>
     <style>
+        :root { color-scheme: dark; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
             display: flex;
             align-items: center;
             justify-content: center;
-            height: 100vh;
-            margin: 0;
-            background: #f9fafb;
-            text-align: center;
-            padding: 20px;
+            min-height: 100vh;
+            background: #141415;
+            color: #ededed;
+            padding: 24px;
         }
-        .container {
-            max-width: 400px;
-        }
-        .icon {
-            width: 64px;
-            height: 64px;
-            margin: 0 auto 20px;
-            background: #6366f1;
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .icon svg {
-            width: 32px;
-            height: 32px;
-            fill: white;
-        }
-        h1 { color: #111827; margin-bottom: 10px; }
-        p { color: #6b7280; margin-bottom: 20px; }
+        .container { max-width: 400px; }
+        .icon { width: 28px; height: 28px; margin-bottom: 20px; fill: #d4a24c; }
+        h1 { font-size: 24px; line-height: 28px; font-weight: 500; margin-bottom: 8px; }
+        p { color: #a1a1a6; line-height: 24px; margin-bottom: 24px; }
         button {
-            background: #6366f1;
-            color: white;
+            height: 44px;
+            padding: 0 20px;
+            font: inherit;
+            font-weight: 500;
+            color: #141415;
+            background: #ededed;
             border: none;
-            padding: 12px 24px;
             border-radius: 8px;
-            font-size: 16px;
             cursor: pointer;
+            transition: background-color 150ms cubic-bezier(0.22, 1, 0.36, 1);
         }
-        button:hover { background: #4f46e5; }
+        button:hover { background: #fff; }
+        button:focus-visible { outline: 2px solid #d4a24c; outline-offset: 2px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="icon">
-            <svg viewBox="0 0 24 24"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/></svg>
-        </div>
-        <h1>You're Offline</h1>
-        <p>Secure Encryptor works offline, but this page isn't cached yet. Please connect to the internet once to enable offline access.</p>
-        <button onclick="window.location.reload()">Try Again</button>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm6 9.09c0 4-2.55 7.7-6 8.83-3.45-1.13-6-4.82-6-8.83v-4.7l6-2.25 6 2.25v4.7z"/></svg>
+        <h1>You're offline</h1>
+        <p>Secure Encryptor works offline, but this page isn't cached yet. Connect to the internet once to enable offline use.</p>
+        <button onclick="window.location.reload()">Try again</button>
     </div>
 </body>
 </html>

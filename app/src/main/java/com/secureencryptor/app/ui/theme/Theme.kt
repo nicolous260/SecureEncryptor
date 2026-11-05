@@ -1,49 +1,58 @@
 package com.secureencryptor.app.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// Premium Slate & Vibrant Accent Color Palette
-val PrimaryIndigo = Color(0xFF6366F1)
-val PrimaryGradientEnd = Color(0xFF4F46E5)
-val SecondaryTeal = Color(0xFF10B981)
-val SecondaryGradientEnd = Color(0xFF059669)
+// A vault at night: graphite surfaces, one brass accent.
 
-val BackgroundDeep = Color(0xFF0B0F19)       // Rich deep space dark
-val CardSurface = Color(0xFF161E2E)          // Premium elevated slate
-val CardBorder = Color(0xFF2A364F)           // Subtle crisp border
-val InputSurface = Color(0xFF0F172A)         // Sunken text field surface
+// Surfaces (graphite ramp)
+val SurfaceDeep = Color(0xFF0F0F10)      // sunken fields, result readout
+val BackgroundDeep = Color(0xFF141415)   // page
+val CardSurface = Color(0xFF19191B)      // cards
+val SurfaceRaised = Color(0xFF232325)    // active tab, secondary buttons
+val InputSurface = SurfaceDeep
+val CardBorder = Color(0x14EDEDED)       // hairline, text at 8%
+val BorderStrong = Color(0x29EDEDED)     // text at 16%
 
-val TextPrimary = Color(0xFFF8FAFC)
-val TextSecondary = Color(0xFF94A3B8)
-val TextMuted = Color(0xFF64748B)
+// Text roles
+val TextPrimary = Color(0xFFEDEDED)
+val TextSecondary = Color(0xFFA1A1A6)
+val TextMuted = Color(0xFF85858B)
+
+// Accent and semantics
+val Brass = Color(0xFFD4A24C)
+val Positive = Color(0xFF4CC38A)
+val Negative = Color(0xFFE5484D)
+
+// One easing curve for everything
+val AppEase = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
 private val DarkColorScheme = darkColorScheme(
-    primary = PrimaryIndigo,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFF1E1B4B),
-    onPrimaryContainer = Color(0xFFE0E7FF),
-    secondary = SecondaryTeal,
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFF064E3B),
-    onSecondaryContainer = Color(0xFFA7F3D0),
+    primary = Brass,
+    onPrimary = BackgroundDeep,
+    primaryContainer = SurfaceRaised,
+    onPrimaryContainer = TextPrimary,
+    secondary = TextSecondary,
+    onSecondary = BackgroundDeep,
+    secondaryContainer = SurfaceRaised,
+    onSecondaryContainer = TextPrimary,
     background = BackgroundDeep,
     onBackground = TextPrimary,
     surface = CardSurface,
     onSurface = TextPrimary,
-    surfaceVariant = InputSurface,
+    surfaceVariant = SurfaceDeep,
     onSurfaceVariant = TextSecondary,
-    outline = CardBorder,
-    outlineVariant = Color(0xFF1E293B)
+    outline = BorderStrong,
+    outlineVariant = CardBorder,
+    error = Negative
 )
 
 @Composable
 fun SecureEncryptorTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true,
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {

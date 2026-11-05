@@ -27,7 +27,7 @@ const app = (function() {
         elements = {
             password: document.getElementById('password'),
             confirmPassword: document.getElementById('confirmPassword'),
-            strengthFill: document.getElementById('strengthFill'),
+            strengthPins: document.getElementById('strengthPins'),
             strengthText: document.getElementById('strengthText'),
             inputText: document.getElementById('inputText'),
             textResult: document.getElementById('textResult'),
@@ -66,11 +66,9 @@ const app = (function() {
         const password = elements.password.value;
         const strength = SecureCrypto.checkPasswordStrength(password);
 
-        elements.strengthFill.style.width = strength.percent + '%';
-        elements.strengthFill.style.background = strength.color;
+        elements.strengthPins.dataset.level = strength.level;
+        elements.strengthPins.setAttribute('aria-valuenow', strength.percent);
         elements.strengthText.textContent = 'Strength: ' + strength.label;
-        elements.strengthText.style.color = strength.color;
-        elements.strengthFill.parentElement.setAttribute('aria-valuenow', strength.percent);
     }
 
     /**
@@ -176,7 +174,7 @@ const app = (function() {
             elements.textResult.classList.add('active');
             elements.textResultActions.style.display = 'flex';
 
-            showAlert('Text encrypted successfully!');
+            showAlert('Text encrypted');
         } catch (err) {
             console.error('Encryption error:', err);
             showAlert('Encryption failed: ' + err.message, 'error');
@@ -207,7 +205,7 @@ const app = (function() {
             elements.textResult.classList.add('active');
             elements.textResultActions.style.display = 'flex';
 
-            showAlert('Text decrypted successfully!');
+            showAlert('Text decrypted');
         } catch (err) {
             console.error('Decryption error:', err);
             showAlert('Decryption failed: Wrong password or corrupted data', 'error');
@@ -223,7 +221,7 @@ const app = (function() {
 
         try {
             await navigator.clipboard.writeText(text);
-            showAlert('Copied to clipboard!');
+            showAlert('Copied to clipboard');
         } catch (err) {
             // Fallback for older browsers
             const textarea = document.createElement('textarea');
@@ -235,7 +233,7 @@ const app = (function() {
 
             try {
                 document.execCommand('copy');
-                showAlert('Copied to clipboard!');
+                showAlert('Copied to clipboard');
             } catch (e) {
                 showAlert('Failed to copy', 'error');
             }
@@ -287,7 +285,7 @@ const app = (function() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        showAlert('Downloaded!');
+        showAlert('Downloaded');
     }
 
     /**
@@ -411,7 +409,7 @@ const app = (function() {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            showAlert('File encrypted successfully!');
+            showAlert('File encrypted');
         } catch (err) {
             console.error('File encryption error:', err);
             showAlert('File encryption failed: ' + err.message, 'error');
@@ -454,7 +452,7 @@ const app = (function() {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            showAlert('File decrypted successfully!');
+            showAlert('File decrypted');
         } catch (err) {
             console.error('File decryption error:', err);
             showAlert('Decryption failed: Wrong password or corrupted file', 'error');

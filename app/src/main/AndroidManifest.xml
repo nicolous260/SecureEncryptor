@@ -7,7 +7,7 @@
         android:label="Secure Encryptor"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@style/Theme.SecureEncryptor">
         <activity
             android:name=".MainActivity"
             android:exported="true"

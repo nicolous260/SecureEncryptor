@@ -8,13 +8,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -26,17 +23,27 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Autorenew
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.FileUpload
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -68,6 +75,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val outputFileResult by viewModel.outputFileResult.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
+    var alertIsError by remember { mutableStateOf(false) }
 
     // File pickers
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -106,7 +114,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     }
 
     LaunchedEffect(alertMessage) {
-        alertMessage?.let { (msg, _) ->
+        alertMessage?.let { (msg, isError) ->
+            alertIsError = isError
             snackbarHostState.showSnackbar(msg)
             viewModel.clearAlert()
         }
@@ -115,464 +124,318 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         containerColor = BackgroundDeep,
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        snackbarHost = {
+            SnackbarHost(snackbarHostState) { data ->
+                Snackbar(
+                    shape = RoundedCornerShape(10.dp),
+                    containerColor = SurfaceRaised,
+                    contentColor = TextPrimary
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (alertIsError) Negative else Positive)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(data.visuals.message, fontSize = 14.sp, lineHeight = 20.sp)
+                    }
+                }
+            }
+        }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .consumeWindowInsets(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+                .consumeWindowInsets(innerPadding),
+            contentAlignment = Alignment.TopCenter
         ) {
-            // Hero Header
-            HeaderSection()
-
-            // Password Card
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = CardSurface),
-                border = BorderStroke(1.dp, CardBorder)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
+                HeaderSection()
+
+                // Password
+                Panel {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Icon(
+                            Icons.Outlined.Lock,
+                            contentDescription = null,
+                            tint = TextMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text(
-                            "Encryption Password",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
+                            "Security",
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 15.sp,
                             color = TextPrimary
                         )
-
-                        Surface(
-                            shape = CircleShape,
-                            color = PrimaryIndigo.copy(alpha = 0.15f)
-                        ) {
-                            Icon(
-                                Icons.Default.Key,
-                                contentDescription = null,
-                                tint = PrimaryIndigo,
-                                modifier = Modifier
-                                    .padding(6.dp)
-                                    .size(16.dp)
-                            )
-                        }
                     }
 
                     OutlinedTextField(
                         value = password,
                         onValueChange = { viewModel.onPasswordChanged(it) },
-                        label = { Text("Password", color = TextSecondary) },
+                        label = { Text("Password") },
+                        placeholder = { Text("At least 6 characters") },
                         visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             IconButton(onClick = { viewModel.togglePasswordVisibility() }) {
                                 Icon(
-                                    imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = "Toggle Password Visibility",
-                                    tint = TextSecondary
+                                    imageVector = if (isPasswordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                    contentDescription = if (isPasswordVisible) "Hide password" else "Show password",
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = PrimaryIndigo,
-                            unfocusedBorderColor = CardBorder,
-                            focusedContainerColor = InputSurface,
-                            unfocusedContainerColor = InputSurface,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        )
+                        shape = RoundedCornerShape(8.dp),
+                        colors = fieldColors()
                     )
 
                     OutlinedTextField(
                         value = confirmPassword,
                         onValueChange = { viewModel.onConfirmPasswordChanged(it) },
-                        label = { Text("Confirm Password", color = TextSecondary) },
+                        label = { Text("Confirm password") },
+                        placeholder = { Text("Repeat password") },
                         visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = PrimaryIndigo,
-                            unfocusedBorderColor = CardBorder,
-                            focusedContainerColor = InputSurface,
-                            unfocusedContainerColor = InputSurface,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        )
+                        shape = RoundedCornerShape(8.dp),
+                        colors = fieldColors()
                     )
 
                     PasswordStrengthMeter(strength = passwordStrength)
 
-                    OutlinedButton(
+                    SecondaryButton(
+                        text = "Generate password",
+                        icon = Icons.Outlined.Autorenew,
                         onClick = { viewModel.generatePassword() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, SecondaryTeal.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = SecondaryTeal
-                        )
-                    ) {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Generate Secure Password", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    }
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
-            }
 
-            // Segmented Control Tab Switcher
-            SegmentedTabControl(
-                selectedTab = selectedTab,
-                onTabSelected = { viewModel.onTabSelected(it) }
-            )
+                SegmentedTabControl(
+                    selectedTab = selectedTab,
+                    onTabSelected = { viewModel.onTabSelected(it) }
+                )
 
-            // Content Panel
-            if (selectedTab == 0) {
-                // Text Encryption Panel with Animated Transition
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = CardSurface),
-                    border = BorderStroke(1.dp, CardBorder)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp)
-                    ) {
+                if (selectedTab == 0) {
+                    Panel {
                         AnimatedContent(
                             targetState = textResult.isNotEmpty(),
                             transitionSpec = {
-                                if (targetState) {
-                                    (slideInHorizontally { width -> width } + fadeIn()).togetherWith(
-                                        slideOutHorizontally { width -> -width } + fadeOut()
-                                    )
-                                } else {
-                                    (slideInHorizontally { width -> -width } + fadeIn()).togetherWith(
-                                        slideOutHorizontally { width -> width } + fadeOut()
-                                    )
-                                }
+                                (fadeIn(tween(300, easing = AppEase)) +
+                                    slideInVertically(tween(300, easing = AppEase)) { 24 })
+                                    .togetherWith(fadeOut(tween(150, easing = AppEase)))
                             },
                             label = "TextEncryptionModeTransition"
                         ) { showResult ->
                             if (showResult) {
-                                // Result Mode View
                                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    Row(
+                                    // Ciphertext readout
+                                    Surface(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = SurfaceDeep,
+                                        border = BorderStroke(1.dp, CardBorder)
                                     ) {
-                                        Text(
-                                            "Result:",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 16.sp,
-                                            color = TextPrimary
-                                        )
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = SecondaryTeal.copy(alpha = 0.15f),
-                                            border = BorderStroke(1.dp, SecondaryTeal.copy(alpha = 0.3f))
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.CheckCircle,
-                                                    contentDescription = null,
-                                                    tint = SecondaryTeal,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                                Spacer(Modifier.width(4.dp))
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(
+                                                "Result",
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 12.sp,
+                                                lineHeight = 16.sp,
+                                                color = TextMuted
+                                            )
+                                            Spacer(Modifier.height(8.dp))
+                                            SelectionContainer {
                                                 Text(
-                                                    "Success",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = SecondaryTeal
+                                                    textResult,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 13.sp,
+                                                    lineHeight = 20.sp,
+                                                    color = TextPrimary,
+                                                    modifier = Modifier
+                                                        .heightIn(max = 240.dp)
+                                                        .verticalScroll(rememberScrollState())
                                                 )
                                             }
                                         }
                                     }
 
-                                    SelectionContainer {
-                                        OutlinedTextField(
-                                            value = textResult,
-                                            onValueChange = {},
-                                            readOnly = true,
-                                            shape = RoundedCornerShape(14.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = SecondaryTeal,
-                                                unfocusedBorderColor = CardBorder,
-                                                focusedContainerColor = InputSurface,
-                                                unfocusedContainerColor = InputSurface,
-                                                focusedTextColor = TextPrimary,
-                                                unfocusedTextColor = TextPrimary
-                                            ),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .heightIn(min = 130.dp)
-                                        )
-                                    }
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        OutlinedButton(
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        QuietButton(
+                                            text = "Copy",
+                                            icon = Icons.Outlined.ContentCopy,
                                             onClick = {
                                                 clipboardManager.setText(AnnotatedString(textResult))
-                                            },
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(48.dp),
-                                            shape = RoundedCornerShape(14.dp),
-                                            border = BorderStroke(1.dp, CardBorder)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.ContentCopy,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(18.dp),
-                                                tint = TextSecondary
-                                            )
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("Copy", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                                        }
-
-                                        OutlinedButton(
+                                            }
+                                        )
+                                        QuietButton(
+                                            text = "Share",
+                                            icon = Icons.Outlined.Share,
                                             onClick = {
                                                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                                     type = "text/plain"
                                                     putExtra(Intent.EXTRA_TEXT, textResult)
                                                 }
-                                                context.startActivity(Intent.createChooser(shareIntent, "Share Result"))
-                                            },
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(48.dp),
-                                            shape = RoundedCornerShape(14.dp),
-                                            border = BorderStroke(1.dp, CardBorder)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Share,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(18.dp),
-                                                tint = TextSecondary
-                                            )
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("Share", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                                        }
+                                                context.startActivity(Intent.createChooser(shareIntent, "Share result"))
+                                            }
+                                        )
                                     }
 
-                                    Button(
+                                    PrimaryButton(
+                                        text = "Back to input",
+                                        icon = Icons.AutoMirrored.Outlined.ArrowBack,
                                         onClick = { viewModel.clearResult() },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(48.dp),
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = PrimaryIndigo,
-                                            contentColor = Color.White
-                                        )
-                                    ) {
-                                        Icon(Icons.Default.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Back to Input", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    }
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             } else {
-                                // Input Mode View
                                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                     OutlinedTextField(
                                         value = inputText,
                                         onValueChange = { viewModel.onInputTextChanged(it) },
-                                        label = { Text("Input Text or Encrypted Payload", color = TextSecondary) },
+                                        label = { Text("Input") },
+                                        placeholder = { Text("Text to encrypt, or encrypted text to decrypt") },
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .heightIn(min = 130.dp),
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = PrimaryIndigo,
-                                            unfocusedBorderColor = CardBorder,
-                                            focusedContainerColor = InputSurface,
-                                            unfocusedContainerColor = InputSurface,
-                                            focusedTextColor = TextPrimary,
-                                            unfocusedTextColor = TextPrimary
-                                        ),
+                                            .heightIn(min = 144.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = fieldColors(),
                                         maxLines = 6
                                     )
 
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Button(
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        PrimaryButton(
+                                            text = "Encrypt",
+                                            icon = Icons.Outlined.Lock,
                                             onClick = { viewModel.encryptText() },
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(50.dp),
-                                            shape = RoundedCornerShape(14.dp),
-                                            enabled = !isProcessing,
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = PrimaryIndigo,
-                                                contentColor = Color.White
-                                            )
-                                        ) {
-                                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("Encrypt", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                        }
-
-                                        Button(
+                                            modifier = Modifier.weight(1f),
+                                            enabled = !isProcessing
+                                        )
+                                        SecondaryButton(
+                                            text = "Decrypt",
+                                            icon = Icons.Outlined.LockOpen,
                                             onClick = { viewModel.decryptText() },
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(50.dp),
-                                            shape = RoundedCornerShape(14.dp),
-                                            enabled = !isProcessing,
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = SecondaryTeal,
-                                                contentColor = Color.White
-                                            )
-                                        ) {
-                                            Icon(Icons.Default.LockOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("Decrypt", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                        }
+                                            modifier = Modifier.weight(1f),
+                                            enabled = !isProcessing
+                                        )
                                     }
                                 }
                             }
                         }
                     }
-                }
-            } else {
-                // File Encryption Panel
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = CardSurface),
-                    border = BorderStroke(1.dp, CardBorder)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
+                } else {
+                    Panel {
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable { filePickerLauncher.launch("*/*") },
-                            shape = RoundedCornerShape(16.dp),
-                            color = InputSurface,
-                            border = BorderStroke(1.dp, CardBorder)
+                            shape = RoundedCornerShape(8.dp),
+                            color = SurfaceDeep,
+                            border = BorderStroke(1.dp, BorderStrong)
                         ) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(28.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
+                                    .padding(horizontal = 20.dp, vertical = 32.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = PrimaryIndigo.copy(alpha = 0.15f)
-                                ) {
-                                    Icon(
-                                        Icons.Default.CloudUpload,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .padding(14.dp)
-                                            .size(36.dp),
-                                        tint = PrimaryIndigo
-                                    )
-                                }
+                                Icon(
+                                    Icons.Outlined.FileUpload,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp),
+                                    tint = TextMuted
+                                )
                                 Spacer(Modifier.height(12.dp))
                                 Text(
-                                    text = if (selectedFileName != null) selectedFileName!! else "Tap to Select File",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp,
+                                    text = selectedFileName ?: "Select a file",
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
                                     color = TextPrimary
                                 )
                                 if (selectedFileSize > 0) {
                                     Spacer(Modifier.height(4.dp))
                                     Text(
                                         text = formatFileSize(selectedFileSize),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = TextSecondary
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 12.sp,
+                                        lineHeight = 16.sp,
+                                        color = TextMuted
                                     )
                                 }
                             }
                         }
 
                         if (isProcessing || fileProgress > 0) {
-                            LinearProgressIndicator(
-                                progress = { fileProgress / 100f },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(8.dp)
-                                    .clip(RoundedCornerShape(4.dp)),
-                                color = PrimaryIndigo,
-                                trackColor = InputSurface
-                            )
-                            Text(
-                                text = "Progress: $fileProgress%",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                                modifier = Modifier.align(Alignment.End)
-                            )
+                            Column {
+                                LinearProgressIndicator(
+                                    progress = { fileProgress / 100f },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp)),
+                                    color = TextPrimary,
+                                    trackColor = SurfaceRaised,
+                                    drawStopIndicator = {}
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "$fileProgress%",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = TextMuted,
+                                    modifier = Modifier.align(Alignment.End)
+                                )
+                            }
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Button(
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PrimaryButton(
+                                text = "Encrypt file",
+                                icon = Icons.Outlined.Lock,
                                 onClick = { viewModel.encryptFile(context) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(50.dp),
-                                shape = RoundedCornerShape(14.dp),
-                                enabled = !isProcessing && selectedFileName != null,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = PrimaryIndigo,
-                                    contentColor = Color.White
-                                )
-                            ) {
-                                Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Encrypt File", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            }
-
-                            Button(
+                                modifier = Modifier.weight(1f),
+                                enabled = !isProcessing && selectedFileName != null
+                            )
+                            SecondaryButton(
+                                text = "Decrypt file",
+                                icon = Icons.Outlined.LockOpen,
                                 onClick = { viewModel.decryptFile(context) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(50.dp),
-                                shape = RoundedCornerShape(14.dp),
-                                enabled = !isProcessing && selectedFileName != null,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = SecondaryTeal,
-                                    contentColor = Color.White
-                                )
-                            ) {
-                                Icon(Icons.Default.LockOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Decrypt File", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            }
+                                modifier = Modifier.weight(1f),
+                                enabled = !isProcessing && selectedFileName != null
+                            )
                         }
                     }
+                }
+
+                // Footer
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    HorizontalDivider(color = CardBorder)
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "AES-256-GCM · PBKDF2 · On-device only",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = TextMuted
+                    )
                 }
             }
         }
@@ -580,35 +443,136 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 }
 
 @Composable
+private fun Panel(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        border = BorderStroke(1.dp, CardBorder)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            content = content
+        )
+    }
+}
+
+@Composable
+private fun fieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = Brass,
+    unfocusedBorderColor = BorderStrong,
+    focusedContainerColor = SurfaceDeep,
+    unfocusedContainerColor = SurfaceDeep,
+    focusedTextColor = TextPrimary,
+    unfocusedTextColor = TextPrimary,
+    focusedLabelColor = TextSecondary,
+    unfocusedLabelColor = TextSecondary,
+    focusedPlaceholderColor = TextMuted,
+    unfocusedPlaceholderColor = TextMuted,
+    cursorColor = Brass
+)
+
+@Composable
+private fun PrimaryButton(
+    text: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(44.dp),
+        shape = RoundedCornerShape(8.dp),
+        enabled = enabled,
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = TextPrimary,
+            contentColor = BackgroundDeep,
+            disabledContainerColor = SurfaceRaised,
+            disabledContentColor = TextMuted
+        )
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun SecondaryButton(
+    text: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(44.dp),
+        shape = RoundedCornerShape(8.dp),
+        enabled = enabled,
+        border = BorderStroke(1.dp, if (enabled) BorderStrong else CardBorder),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = SurfaceRaised,
+            contentColor = TextPrimary,
+            disabledContainerColor = SurfaceDeep,
+            disabledContentColor = TextMuted
+        )
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun QuietButton(text: String, icon: ImageVector, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.height(40.dp),
+        shape = RoundedCornerShape(8.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp),
+        colors = ButtonDefaults.textButtonColors(contentColor = TextSecondary)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontSize = 14.sp)
+    }
+}
+
+@Composable
 fun HeaderSection() {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(top = 8.dp, bottom = 8.dp)
     ) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = PrimaryIndigo.copy(alpha = 0.2f),
-            border = BorderStroke(1.dp, PrimaryIndigo.copy(alpha = 0.4f)),
-            modifier = Modifier.size(44.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Default.Security,
-                    contentDescription = "Logo",
-                    tint = PrimaryIndigo,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Outlined.Shield,
+                contentDescription = null,
+                tint = Brass,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                "Secure Encryptor",
+                fontWeight = FontWeight.Medium,
+                fontSize = 24.sp,
+                lineHeight = 28.sp,
+                color = TextPrimary
+            )
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
-            "Secure Encryptor",
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = 22.sp,
-            color = TextPrimary
+            "Encrypt text and files with a password. Everything stays on this device.",
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            color = TextSecondary
         )
     }
 }
@@ -620,87 +584,42 @@ fun SegmentedTabControl(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = CardSurface,
+        shape = RoundedCornerShape(10.dp),
+        color = SurfaceDeep,
         border = BorderStroke(1.dp, CardBorder)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(4.dp)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            val tab0Bg by animateColorAsState(
-                if (selectedTab == 0) PrimaryIndigo else Color.Transparent,
-                label = "tab0Bg"
-            )
-            val tab0Text by animateColorAsState(
-                if (selectedTab == 0) Color.White else TextSecondary,
-                label = "tab0Text"
-            )
-
-            val tab1Bg by animateColorAsState(
-                if (selectedTab == 1) PrimaryIndigo else Color.Transparent,
-                label = "tab1Bg"
-            )
-            val tab1Text by animateColorAsState(
-                if (selectedTab == 1) Color.White else TextSecondary,
-                label = "tab1Text"
-            )
-
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { onTabSelected(0) },
-                color = tab0Bg,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+            listOf("Text", "Files").forEachIndexed { index, label ->
+                val selected = selectedTab == index
+                val bg by animateColorAsState(
+                    if (selected) SurfaceRaised else Color.Transparent,
+                    animationSpec = tween(150, easing = AppEase),
+                    label = "tabBg$index"
+                )
+                val fg by animateColorAsState(
+                    if (selected) TextPrimary else TextSecondary,
+                    animationSpec = tween(150, easing = AppEase),
+                    label = "tabFg$index"
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(bg)
+                        .clickable { onTabSelected(index) },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Default.TextFields,
-                        contentDescription = null,
-                        tint = tab0Text,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
                     Text(
-                        "Text Encryption",
-                        fontWeight = FontWeight.Bold,
+                        label,
+                        fontWeight = FontWeight.Medium,
                         fontSize = 14.sp,
-                        color = tab0Text
-                    )
-                }
-            }
-
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { onTabSelected(1) },
-                color = tab1Bg,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Default.AttachFile,
-                        contentDescription = null,
-                        tint = tab1Text,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "File Encryption",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = tab1Text
+                        color = fg
                     )
                 }
             }
@@ -708,51 +627,45 @@ fun SegmentedTabControl(
     }
 }
 
+/** Five pins that set like a lock. Brass once the password is strong. */
 @Composable
 fun PasswordStrengthMeter(strength: PasswordStrength) {
-    val animatedPercent by animateFloatAsState(
-        targetValue = strength.percent / 100f,
-        animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-        label = "strengthPercent"
+    val filled = (strength.percent / 20f).toInt().coerceIn(0, 5)
+    val pinColor by animateColorAsState(
+        if (filled >= 4) Brass else TextSecondary,
+        animationSpec = tween(180, easing = AppEase),
+        label = "pinColor"
     )
+    val label = strength.label.lowercase().replaceFirstChar { it.uppercase() }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text(
-                "Strength: ${strength.label}",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = parseHexColor(strength.colorHex)
-            )
-            Text(
-                "${strength.percent.toInt()}%",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = parseHexColor(strength.colorHex)
-            )
+            repeat(5) { index ->
+                val pin by animateColorAsState(
+                    if (index < filled) pinColor else SurfaceRaised,
+                    animationSpec = tween(180, easing = AppEase),
+                    label = "pin$index"
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(pin)
+                )
+            }
         }
         Spacer(Modifier.height(8.dp))
-        LinearProgressIndicator(
-            progress = { animatedPercent },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp)),
-            color = parseHexColor(strength.colorHex),
-            trackColor = InputSurface
+        Text(
+            if (filled == 0) "Strength: None" else "Strength: $label",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            color = TextMuted
         )
-    }
-}
-
-fun parseHexColor(hex: String): Color {
-    return try {
-        Color(android.graphics.Color.parseColor(hex))
-    } catch (e: Exception) {
-        Color.Gray
     }
 }
 

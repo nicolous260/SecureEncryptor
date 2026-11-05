@@ -240,9 +240,13 @@ const SecureCrypto = (function() {
     /**
      * Calculate password strength
      * @param {string} password - Password to check
-     * @returns {Object} Score (0-4), label, and color
+     * @returns {Object} Score (0-4), label, percent and level (0-5 pins)
      */
     function checkPasswordStrength(password) {
+        if (!password) {
+            return { score: 0, label: 'None', percent: 0, level: 0 };
+        }
+
         let score = 0;
 
         if (password.length >= 8) score++;
@@ -254,14 +258,13 @@ const SecureCrypto = (function() {
 
         score = Math.min(4, Math.floor(score / 1.5));
 
-        const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#16a34a'];
-        const labels = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
+        const labels = ['Very weak', 'Weak', 'Fair', 'Strong', 'Very strong'];
 
         return {
             score: score,
             label: labels[score],
-            color: colors[score],
-            percent: (score + 1) * 20
+            percent: (score + 1) * 20,
+            level: score + 1
         };
     }
 

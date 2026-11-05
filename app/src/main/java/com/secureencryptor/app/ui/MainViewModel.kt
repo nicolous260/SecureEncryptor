@@ -76,7 +76,7 @@ class MainViewModel : ViewModel() {
         _password.value = generated
         _confirmPassword.value = generated
         _passwordStrength.value = PasswordUtils.checkPasswordStrength(generated)
-        showAlert("Generated strong password!", isError = false)
+        showAlert("Password generated", isError = false)
     }
 
     fun onTabSelected(index: Int) {
@@ -147,7 +147,7 @@ class MainViewModel : ViewModel() {
                     CryptoEngine.encryptText(_password.value, text)
                 }
                 _textResult.value = result
-                showAlert("Text encrypted successfully!", isError = false)
+                showAlert("Text encrypted", isError = false)
             } catch (e: Exception) {
                 showAlert("Encryption failed: ${e.localizedMessage}", isError = true)
             } finally {
@@ -171,7 +171,7 @@ class MainViewModel : ViewModel() {
                     CryptoEngine.decryptText(_password.value, text)
                 }
                 _textResult.value = result
-                showAlert("Text decrypted successfully!", isError = false)
+                showAlert("Text decrypted", isError = false)
             } catch (e: Exception) {
                 showAlert("Decryption failed: Wrong password or corrupted data", isError = true)
             } finally {
@@ -203,7 +203,7 @@ class MainViewModel : ViewModel() {
 
                 val outName = "$fileName.encrypted"
                 _outputFileResult.value = Pair(outName, encryptedBytes)
-                showAlert("File encrypted successfully! Ready to save.", isError = false)
+                showAlert("File encrypted, ready to save", isError = false)
             } catch (e: Exception) {
                 showAlert("File encryption failed: ${e.localizedMessage}", isError = true)
             } finally {
@@ -233,7 +233,7 @@ class MainViewModel : ViewModel() {
                 }
 
                 _outputFileResult.value = Pair(decryptedFile.fileName, decryptedFile.data)
-                showAlert("File decrypted successfully! Ready to save.", isError = false)
+                showAlert("File decrypted, ready to save", isError = false)
             } catch (e: Exception) {
                 showAlert("Decryption failed: Wrong password or corrupted file", isError = true)
             } finally {
