@@ -38,9 +38,15 @@ jobs:
           name: SecureEncryptor-apk
           path: SecureEncryptor.apk
 
+      - name: Read app version
+        id: version
+        run: echo "name=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+
+      # Creates the tag on GitHub if it does not exist yet, so "Run workflow" is enough.
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.name }}
+          name: v${{ steps.version.outputs.name }}
           files: SecureEncryptor.apk
           generate_release_notes: true
