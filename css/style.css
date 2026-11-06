@@ -96,29 +96,18 @@ header {
     width: 28px;
     height: 28px;
     flex: none;
-    fill: var(--accent);
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 h1 {
-    font-size: 28px;
-    line-height: 32px;
+    font-size: 32px;
+    line-height: 36px;
     font-weight: 500;
-}
-
-.version {
-    font-family: var(--mono);
-    font-size: 12px;
-    line-height: 16px;
-    color: var(--text-3);
-    align-self: flex-end;
-    padding-bottom: 6px;
-}
-
-.subtitle {
-    margin-top: 8px;
-    font-size: 15px;
-    line-height: 24px;
-    color: var(--text-2);
+    letter-spacing: -0.02em;
 }
 
 /* ===== LAYOUT ===== */
@@ -630,8 +619,8 @@ button {
     }
 
     h1 {
-        font-size: 24px;
-        line-height: 28px;
+        font-size: 28px;
+        line-height: 32px;
     }
 
     .button-group .btn-text {

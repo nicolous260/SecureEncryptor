@@ -30,7 +30,6 @@ import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.*
@@ -533,33 +532,26 @@ private fun QuietButton(text: String, icon: ImageVector, onClick: () -> Unit) {
 
 @Composable
 fun HeaderSection() {
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 8.dp)
+            .padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Outlined.Shield,
-                contentDescription = null,
-                tint = Brass,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(Modifier.width(12.dp))
-            Text(
-                "SecureEncryptor",
-                fontWeight = FontWeight.Medium,
-                fontSize = 24.sp,
-                lineHeight = 28.sp,
-                color = TextPrimary
-            )
-        }
-        Spacer(Modifier.height(8.dp))
+        Icon(
+            Icons.Outlined.Lock,
+            contentDescription = null,
+            tint = Brass,
+            modifier = Modifier.size(28.dp)
+        )
+        Spacer(Modifier.width(12.dp))
         Text(
-            "Encrypt text and files with a password. Everything stays on this device.",
-            fontSize = 14.sp,
-            lineHeight = 20.sp,
-            color = TextSecondary
+            "SecureEncryptor",
+            fontWeight = FontWeight.Medium,
+            fontSize = 28.sp,
+            lineHeight = 32.sp,
+            letterSpacing = (-0.6).sp,
+            color = TextPrimary
         )
     }
 }
