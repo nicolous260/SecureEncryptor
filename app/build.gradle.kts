@@ -12,17 +12,27 @@ android {
         applicationId = "com.secureencryptor.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.1.3"
+        versionCode = 6
+        versionName = "1.1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        // Fixed key so every build has the same signature and updates install over each other.
+        create("se") {
+            storeFile = file("se-release.jks")
+            storePassword = "secureencryptor"
+            keyAlias = "se"
+            keyPassword = "secureencryptor"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("se")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

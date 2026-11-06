@@ -3,7 +3,7 @@
 [![Android](https://img.shields.io/badge/Android-SDK%2035-brightgreen?logo=android&logoColor=white)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-purple?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-blue?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
-[![Release](https://img.shields.io/badge/Release-v1.1.3-emerald)](https://github.com/nicolous260/SecureEncryptor/releases/tag/v1.1.3)
+[![Release](https://img.shields.io/badge/Release-v1.1.4-emerald)](https://github.com/nicolous260/SecureEncryptor/releases/tag/v1.1.4)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 A privacy-first, client-side encryption application implementing military-grade **AES-256-GCM** encryption and **PBKDF2-HMAC-SHA256** key derivation.
@@ -16,8 +16,8 @@ Available as a modern **Native Android Application** (built with Kotlin & Jetpac
 
 | Platform | Download Link | Description |
 | :--- | :--- | :--- |
-| **Android (APK)** | [**SecureEncryptor.apk (v1.1.3)**](https://github.com/nicolous260/SecureEncryptor/releases/download/v1.1.3/SecureEncryptor.apk) | Native Android App (SDK 24+) |
-| **GitHub Release** | [**View Release Page**](https://github.com/nicolous260/SecureEncryptor/releases/tag/v1.1.3) | v1.1.3 Tagged Release |
+| **Android (APK)** | [**SecureEncryptor.apk (v1.1.4)**](https://github.com/nicolous260/SecureEncryptor/releases/download/v1.1.4/SecureEncryptor.apk) | Native Android App (SDK 24+) |
+| **GitHub Release** | [**View Release Page**](https://github.com/nicolous260/SecureEncryptor/releases/tag/v1.1.4) | v1.1.4 Tagged Release |
 | **Web Version** | [`index.html`](./index.html) | Progressive Web App (PWA) |
 
 ---
