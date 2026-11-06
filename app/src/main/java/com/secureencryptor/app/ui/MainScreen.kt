@@ -157,7 +157,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     .widthIn(max = 560.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
                 HeaderSection()
 
@@ -181,41 +181,43 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         )
                     }
 
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { viewModel.onPasswordChanged(it) },
-                        label = { Text("Password") },
-                        placeholder = { Text("At least 6 characters") },
-                        visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { viewModel.togglePasswordVisibility() }) {
-                                Icon(
-                                    imageVector = if (isPasswordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                    contentDescription = if (isPasswordVisible) "Hide password" else "Show password",
-                                    tint = TextMuted,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = fieldColors()
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { viewModel.onPasswordChanged(it) },
+                            label = { Text("Password") },
+                            placeholder = { Text("At least 6 characters") },
+                            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { viewModel.togglePasswordVisibility() }) {
+                                    Icon(
+                                        imageVector = if (isPasswordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                        contentDescription = if (isPasswordVisible) "Hide password" else "Show password",
+                                        tint = TextMuted,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = fieldColors()
+                        )
 
-                    OutlinedTextField(
-                        value = confirmPassword,
-                        onValueChange = { viewModel.onConfirmPasswordChanged(it) },
-                        label = { Text("Confirm password") },
-                        placeholder = { Text("Repeat password") },
-                        visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = fieldColors()
-                    )
+                        OutlinedTextField(
+                            value = confirmPassword,
+                            onValueChange = { viewModel.onConfirmPasswordChanged(it) },
+                            label = { Text("Confirm password") },
+                            placeholder = { Text("Repeat password") },
+                            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = fieldColors()
+                        )
 
-                    PasswordStrengthMeter(strength = passwordStrength)
+                        PasswordStrengthMeter(strength = passwordStrength)
+                    }
 
                     SecondaryButton(
                         text = "Generate password",
@@ -225,6 +227,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     )
                 }
 
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SegmentedTabControl(
                     selectedTab = selectedTab,
                     onTabSelected = { viewModel.onTabSelected(it) }
@@ -422,6 +425,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             )
                         }
                     }
+                }
                 }
             }
         }

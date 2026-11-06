@@ -243,7 +243,7 @@ textarea {
 
 /* ===== STRENGTH (five pins) ===== */
 .strength {
-    margin-top: 20px;
+    margin-top: 12px;
 }
 
 .pins {
@@ -284,7 +284,7 @@ textarea {
     gap: 4px;
     width: 100%;
     padding: 4px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     background: var(--deep);
     border: 1px solid var(--hairline);
     border-radius: 10px;
